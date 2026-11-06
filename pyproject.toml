@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metabolomics-agent"
+version = "0.1.0"
+description = "A small, auditable LLM harness for metabolomics statistical analysis"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26,<3",
+  "pandas>=2.1,<3",
+  "scipy>=1.11,<2",
+  "statsmodels>=0.14,<0.15",
+  "scikit-learn>=1.4,<2",
+  "matplotlib>=3.6,<4",
+  "seaborn>=0.13,<0.14",
+  "pydantic>=2.7,<3",
+  "openai>=1.50,<3",
+  "python-dotenv>=1,<2",
+  "openpyxl>=3.1,<4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
+
+[project.scripts]
+metabolomics-agent = "metabolomics_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+metabolomics_agent = ["prompts/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100

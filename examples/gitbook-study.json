@@ -1,0 +1,11 @@
+{
+  "data_path": "../data/Lipidomics_dataset.xlsx",
+  "sample_column": "Sample Name",
+  "group_column": "Label",
+  "reference_group": "N",
+  "treatment_group": "T",
+  "design": "independent",
+  "input_scale": "concentration",
+  "normalization_status": "The authors describe prior normalization to NIST SRM 1950. Do not add normalization for exact reproduction.",
+  "objective": "Reproduce the GitBook's two-sample Python tutorial using T versus N: pooled two-sided t-tests (student_t), Holm-Sidak correction across all 127 lipids, no imputation, no normalization, and no transformation. Inspect PC 34:1. Also run descriptive PCA with separate autoscaling and produce the required figures. If adding a Mann-Whitney analysis to reproduce that tutorial section, record it as an exploratory revision, retain the original t-test results, and inspect PC 36:5. Do not substitute Welch or BH for the specified reproduction parameters. Source: https://laboratory-of-lipid-metabolism-a.gitbook.io/omics-data-visualization-in-r-and-python/metabolites-and-lipids-univariate-statistical-analysis-in-python/two-sample-comparisons-in-python"
+}

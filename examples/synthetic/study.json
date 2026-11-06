@@ -1,0 +1,11 @@
+{
+  "data_path": "abundances.csv",
+  "metadata_path": "metadata.csv",
+  "sample_column": "sample_id",
+  "group_column": "group",
+  "reference_group": "control",
+  "treatment_group": "condition",
+  "design": "independent",
+  "normalization_status": "Synthetic positive concentrations; no normalization applied.",
+  "objective": "Compare synthetic condition versus control. Assess data quality, perform multiplicity-corrected tests and PCA, and report limitations."
+}

@@ -1,0 +1,10 @@
+{
+  "seed": 42,
+  "samples_per_group": 30,
+  "shifted_log_features": {
+    "lipid_01": 1.0,
+    "lipid_02": -0.9,
+    "lipid_03": 0.6
+  },
+  "note": "Synthetic ground truth; never supplied to the agent."
+}
