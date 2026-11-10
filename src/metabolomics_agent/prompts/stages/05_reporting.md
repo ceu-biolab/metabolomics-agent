@@ -10,8 +10,9 @@ preserve partial or failed work honestly. Do not generate additional analyses.
 
 Read the current workflow plan, stage statuses, preparation decisions, comparison
 tables, figures, stage reports, handoffs, unresolved issues, and supersession links.
-Use the current supported scope: descriptive and univariate analysis only. Do not
-infer that multivariate, batch-correction, or QC procedures were performed.
+Use the runtime scope: descriptive/univariate analysis and requested exploratory
+PCA. Do not infer that other multivariate, batch-correction or QC procedures were
+performed.
 
 ## Synthesis procedure
 
@@ -81,7 +82,7 @@ The renderer records the registered objective, scope, preceding stage statuses,
 current plans and data representations, current figures and their source links,
 open inherited issue codes, and recorded unchecked assumptions. In descriptive
 workflows it explicitly explains why group-comparison tests and volcano plots
-were omitted; no multivariate result is required. In two-group workflows use the
+were omitted; PCA is required only when registered in the workflow scope. In two-group workflows use the
 saved effects and unadjusted confidence intervals as well as corrected p-values.
 Do not interpret a valid nonsignificant test as proof that the groups are equivalent.
 
@@ -92,3 +93,21 @@ retains an explicitly incomplete report with links to stage outcomes and partial
 evidence. Subsequent revisions retain historical files; distinguish those from
 the current evidence selected for final reporting. Report limitations even when
 completion is valid, and preserve uncertainty that was not resolved by a check.
+
+
+## PCA and result-selected heatmaps
+
+Review pca_results, pca_skip and plot_results in the current context/handoff.
+Report the PCA source and transform, centering/scaling and SD convention, number
+of fitted components, sample/feature and imputation counts, explained variance
+and remainder, and links to scores, weights, variance and reconstructible model
+parameters. Explain pairing and imputation limitations. Scores stay local; use
+aggregate variance summaries and bounded weights/diagnostics in interpretations.
+PCA separation does not establish significance, causality or prediction.
+
+For significant heatmaps, describe the source comparison, saved correction and
+alpha, candidate/selected counts, complete page coverage and selection caveat.
+The selection did not change the correction family. No selected features is a
+justified omission with a saved record. Failed rendering or an incomplete page
+set cannot satisfy the requested figure. Distinguish an optional skipped PCA from
+a required incomplete PCA, and respect the registered objective when finalizing.

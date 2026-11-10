@@ -48,7 +48,10 @@ def finish_analysis(state: RunState, args: FinishArgs):
                   f"{', '.join(scope.required_figures) or 'none'}.", ""]
         if scope.analysis_kind == "descriptive":
             lines += ["Univariate testing and comparison-derived volcano plots were omitted by the registered descriptive objective.", ""]
-        lines += ["No multivariate analysis, batch correction, or QC-based correction was performed.", ""]
+        if state.workflow.data.pca_ids:
+            lines += ["Exploratory PCA was performed. No batch correction or QC-based correction was performed.", ""]
+        else:
+            lines += ["No multivariate analysis, batch correction, or QC-based correction was performed.", ""]
         for stage, path in state.workflow.data.completed_reports.items():
             stage_report = StageReport.model_validate_json(state.evidence.path(path).read_text())
             lines += [f"- {stage}: **{stage_report.status}**; [stage report]({path.replace('.json', '.md')})."]
@@ -112,6 +115,44 @@ def finish_analysis(state: RunState, args: FinishArgs):
             lines += [f"- **{uid} ({attempt['status']})**: [audit]({audit}), "
                       f"[issues]({issues}), [uncorrected checkpoint]({raw}), "
                       f"[methods and correction family]({uid}_univariate.json)."]
+    if state.workflow and state.run_info.get("pca_version"):
+        lines += ["", "## Exploratory PCA", ""]
+        requirement = state.workflow.pca_requirement()
+        lines += [f"Registered PCA requirement: {requirement}.", ""]
+        if state.workflow.data.pca_skip:
+            skip = state.workflow.data.pca_skip
+            artifact = state.evidence.artifacts[skip["artifact_id"]]
+            lines += [f"PCA skipped: {skip['rationale']} [Recorded omission]({artifact.path}).", ""]
+        for result in state.workflow.pca_descriptors():
+            lines += [f"### {result['pca_id']}: {result['status']}", "",
+                      f"Dataset {result['dataset_id']}; plan {result['plan_id']}; "
+                      f"source scale {result['scale']}; source transform {result['transform']}; "
+                      f"mean-centered; scaling {result['scaling']} with SD ddof={result['scaling_ddof']}. "
+                      f"Samples: {result['samples']}; features: {result['feature_count']}; "
+                      f"imputed input cells: {result['imputed_cells']}.", ""]
+            if result["status"] == "completed":
+                ratios = ", ".join(f"PC{i+1}: {value:.2%}" for i, value in enumerate(result["explained_variance_ratio"]))
+                lines += [f"Explained variance: {ratios}. Unrepresented remainder: {result['remaining_variance_ratio']:.2%}.", "",
+                          "Full SVD; whitening disabled. Loadings are unit eigenvector weights, not automatically variable-component correlations.", ""]
+            for key, aid in result["artifacts"].items():
+                lines += [f"- [{key}: {aid}]({state.evidence.artifacts[aid].path})"]
+            lines += ["", *result["notes"], ""]
+            if result.get("failure_reason"):
+                lines += [f"Failure: {result['failure_reason']}.", ""]
+        if state.workflow.data.pca_plan_id:
+            pid = state.workflow.data.pca_plan_id
+            lines += [f"[Complete PCA plan]({pid}_plan.json).", ""]
+    if state.workflow and state.workflow.data.plot_result_ids:
+        lines += ["## Heatmap selection and page coverage", ""]
+        for gid in state.workflow.data.plot_result_ids:
+            plot = state.plot_results[gid]
+            lines += [f"- **{gid} ({plot['status']})**: {plot['selected_count']} variables selected; "
+                      f"{len(plot['figure_ids'])}/{plot['pages_expected']} pages generated."]
+            for key, aid in plot["artifacts"].items():
+                lines += [f"  [{key}]({state.evidence.artifacts[aid].path})"]
+            if plot["figure_spec"]["selection_mode"] == "significant":
+                lines += ["  Selection uses valid adjusted p-values below the comparison's registered alpha. "
+                          "The original correction family is preserved. Separation is descriptive and not independent validation."]
     lines += ["## Analysis decisions", ""]
     plans = state.preprocessing_plans if state.workflow else state.plans
     if audited_figures:
@@ -178,7 +219,7 @@ def finish_analysis(state: RunState, args: FinishArgs):
                     lines += [f"- Historical [{historical.stage_id}: {historical.attempt_id}]({path.replace('.json', '.md')}): {historical.status}."]
     if not state.workflow:
         lines += ["", "## PCA", ""]
-    for pid, result in state.pcas.items():
+    for pid, result in (state.pcas.items() if not state.workflow else []):
         percentages = ", ".join(f"PC{i+1}: {v:.1%}" for i, v in enumerate(result["explained_variance_ratio"]))
         lines += [f"- {pid}, dataset {result['dataset_id']}: {percentages}. "]
     lines += ["", "## Figures", ""]
@@ -193,6 +234,8 @@ def finish_analysis(state: RunState, args: FinishArgs):
             lines += [f"### {aid}: {artifact['kind']} ({artifact['source_id']})", "",
                       f"![{artifact['kind']}]({artifact['path']})", ""]
             if audited_figures:
+                if artifact.get("page_count", 1) > 1:
+                    lines += [f"Page {artifact['page']} of {artifact['page_count']}.", ""]
                 lines += [artifact["caption"], "",
                           f"Scale: {artifact['scale']}; centering: {artifact['centering']}; "
                           f"scaling: {artifact['scaling']}; sample order: {artifact['sample_order']}. "

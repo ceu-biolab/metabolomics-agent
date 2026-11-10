@@ -9,8 +9,9 @@ The current scope is **two-group analysis of already quantified concentration or
 intensity tables**. It includes independent and paired designs, missing-value
 handling, group-wise descriptive statistics, univariate tests, plots, and a Markdown report.
 New runs follow five validated stages: coordination, preparation, univariate
-analysis, visualization, and reporting. Multivariate analysis and batch/QC
-correction are excluded. It does not process raw MS files. No LLM API request is
+analysis, visualization, and reporting. Exploratory PCA is available as an optional
+block of the statistical stage; other multivariate methods and batch/QC correction
+are excluded. It does not process raw MS files. No LLM API request is
 made by installation, tests, or the offline demo.
 
 ## Install
@@ -38,8 +39,20 @@ This generates a synthetic study with 60 samples and 14 input features, includin
 missing values, a constant feature, and an outlier. A **scripted test driver** runs
 through the same tool-calling loop as a live model. It selects imputation based on
 observed missingness, performs a log-scale Welch analysis, and generates figures
-through the five-stage workflow. It does not run PCA. Scientifically justified
+through the five-stage workflow, including a heatmap selected from valid significant
+comparison results. The default demo does not run PCA. Scientifically justified
 sensitivity analyses can be requested through versioned stage revisions.
+
+To include exploratory PCA and scores/variance/loading figures:
+
+```bash
+python -m metabolomics_agent demo --pca
+python -m metabolomics_agent demo --pca-only
+```
+
+The second command runs a descriptive/PCA objective without univariate tests.
+PCA uses scikit-learn and its own persisted centered/scaled matrix. Plotting uses
+Seaborn and Matplotlib, as described in the article.
 
 The demo verifies the machinery. It does not evaluate a real model's reasoning.
 The synthetic ground truth is not provided to the agent.
@@ -51,7 +64,8 @@ committed checkpoints; reopening evidence marks unfinished attempts as interrupt
 Each completed stage also saves a validated `handoff.json` with aggregate context,
 current evidence IDs, decisions, and relevant issues for the next stage. English
 stage prompts and tool permissions are active; full individual sample tables stay
-local. See [delivery F](docs/staged-workflow/delivery-F.md) for persisted plotting
+local. See [the PCA/heatmap extension](docs/staged-workflow/pca-heatmap-extension.md)
+for automatic selection, PCA contracts and verification; [delivery F](docs/staged-workflow/delivery-F.md) for persisted plotting
 sources and objective-specific reports, [delivery E](docs/staged-workflow/delivery-E.md)
 for univariate auditing, and [delivery D](docs/staged-workflow/delivery-D.md) for
 descriptive statistics.
@@ -195,8 +209,9 @@ are counted and recorded as excluded. The direction of all signed effects is
 | `inspect_univariate` | Prepared-data eligibility, observed/imputed counts, paired differences, normality diagnostics, and ties before selecting a test |
 | `set_univariate_plan` | Diagnostic ID, statistical test, correction, hypothesis family, value policy, and purpose for the current dataset |
 | `compare_groups` | Welch, pooled t, Mann–Whitney U, paired t, or Wilcoxon; BH, Holm–Šidák, Holm, or Bonferroni correction |
+| `inspect_pca_inputs`, `set_pca_plan`, `run_pca`, `skip_pca` | Optional PCA block: diagnostics, frozen plan, durable fit outputs, or justified optional omission |
 | `set_figure_plan` | Figures with current sources, feature-selection rationale, scale, display centering/scaling, ordering, and captions |
-| `make_plot` | Before/after distributions, boxplots with points and pair lines, adjusted-p volcano, and non-clustered heatmaps; exact local sources, display values, and configurations |
+| `make_plot` | Before/after distributions, boxplots with points and pair lines, adjusted-p volcano, paginated non-clustered heatmaps, and current PCA scores/variance/loadings; exact local sources and configurations |
 | `read_result` | Bounded result-table inspection by artifact ID, with optional feature filtering |
 | `get_stage_context`, `get_workflow_state`, `read_stage_report` | Aggregate context, current plans, and bounded stage reports |
 | `submit_stage_assessment` | Evidence-linked assessment and validated stage completion |
@@ -207,6 +222,7 @@ are counted and recorded as excluded. The direction of all signed effects is
 ```bash
 python -m metabolomics_agent tool-schemas
 python -m metabolomics_agent tool-schemas --stage 03_univariate
+python -m metabolomics_agent tool-schemas --stage 03_univariate --analysis-block pca
 ```
 
 The current prompts are in `src/metabolomics_agent/prompts/stages/`. Each request
@@ -214,7 +230,9 @@ uses the shared English instructions plus the active stage's prompt and tools.
 The bundle is frozen in run metadata; exact request messages and tools are saved
 under `requests/`. Runtime checks reject out-of-stage tools, mismatched pairing,
 unsafe log inputs, superseded sources, unregistered figures, and duplicate execution
-of a statistical plan. Multivariate tools are not offered in any new stage.
+of a statistical plan. PCA tools are offered only in the requested PCA block;
+univariate tools become available after its assessment. Other multivariate tools
+remain unavailable.
 
 Plans and outputs are immutable. Each preparation plan prepares one dataset directly from
 the original input. A preparation revision creates a new plan and dataset; no cumulative
@@ -230,8 +248,9 @@ Two analysis representations are saved, in addition to operation checkpoints:
 2. Optionally transformed, unscaled values for statistical tests.
 
 An aligned boolean imputation mask is also saved for each newly prepared dataset.
-PCA representations are not computed. Heatmaps use an independent display-only
-representation derived from a registered concentration or test scale.
+PCA representations are computed only when requested, under a separate PCA plan.
+Heatmaps use an independent display-only representation derived from a registered
+concentration or test scale.
 
 Preparation requires full group-wise summaries of raw/original observations and
 both prepared scales (including imputed cells). Additional `observed_only` summaries
@@ -276,12 +295,38 @@ and retain available points without counterparts. Source tables/configurations
 with individual identifiers remain local; aggregate descriptors and caveats pass
 to later stages. The final report links each figure's reproduction files.
 
-Heatmaps require explicit features and complete finite values. Optional per-feature
+Heatmaps accept an explicit feature list or `selection_mode="significant"` with a
+current `comparison_id` and no explicit features. The latter selects valid rows
+with adjusted p below the comparison's saved alpha, preserving its correction
+family and table order. Candidate inclusion/exclusion reasons are saved. All
+selected features are displayed in pages (default 40 rows), with no implicit
+12-feature cap. Zero selected features is a documented omission; a failed page
+cannot satisfy completion. Selection on the same data is descriptive and does
+not provide independent confirmation of group separation.
+
+Heatmaps require complete finite selected values. Optional per-feature
 mean centering and/or sample-SD scaling apply only to the display matrix. Samples
 follow input order or reference/treatment order; no clustering is performed.
 Volcano plots record omitted points and clip zero adjusted p-values only for the
 display coordinate, preserving numerical inference. Empty or failed figures do
 not satisfy a plan; committed plotting checkpoints remain available.
+
+PCA has a separate `disabled`/`optional`/`required` workflow requirement. In its
+block, inspect sources before registering the PCA plan and execute it once.
+Inputs may be `concentrations` or `testing`; the default is the existing testing
+scale. Mean centering is explicit; scaling is none, auto, or Pareto. The default
+SD convention is ddof=0 (scikit-learn StandardScaler); ddof=1 can be selected.
+PCA uses full SVD, no whitening, and two components by default. Missing values,
+constant selected features and insufficient numerical rank require a recorded
+correction or optional omission; no implicit imputation or sample removal occurs.
+The main PCA uses retained/preselected features independently of univariate p-values.
+
+Input and PCA matrices, scaling factors, scores, unit eigenvector weights,
+explained variance, singular values and reconstructible model metadata are saved.
+Individual matrices/scores remain local. Groups color saved scores after fitting.
+PCA is exploratory; apparent separation does not establish significance or predictive
+performance. Ordinary PCA does not model paired dependence. An old run retains
+its frozen capabilities and prompts; it is not implicitly upgraded.
 
 Multiplicity correction covers valid tested features within each comparison.
 Confidence intervals are not multiplicity-adjusted. Correction across adaptive
@@ -361,7 +406,10 @@ src/metabolomics_agent/
   models.py         study, plan, tool arguments, and LLM configuration
   data.py           input validation and metadata alignment
   state.py          immutable artifacts, provenance, and event log
-  analysis.py       preprocessing, tests, effects, and PCA
+  analysis.py       preprocessing, tests, effects, and legacy PCA
+  pca.py            audited optional PCA and plot sources
+  heatmaps.py       saved significance selection and page coverage
+  visualization.py  durable drawing data, configurations and images
   plots.py          figures
   tools.py          tool schemas and validated dispatch
   report.py         computed report and evidence-linked interpretation

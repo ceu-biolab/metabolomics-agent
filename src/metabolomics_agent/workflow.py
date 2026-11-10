@@ -9,6 +9,7 @@ from .workflow_models import StageHandoff, WorkflowState
 
 STAGES = ("01_coordination", "02_preparation", "03_univariate",
           "04_visualization", "05_reporting")
+PCA_TOOLS = {"inspect_pca_inputs", "set_pca_plan", "run_pca", "skip_pca"}
 COMMON_TOOLS = {"get_workflow_state", "get_stage_context", "read_stage_report", "read_result",
                 "submit_stage_assessment", "request_revision"}
 STAGE_TOOLS = {
@@ -32,15 +33,34 @@ class Workflow:
             directory = files("metabolomics_agent").joinpath("prompts/stages")
             state.run_info["workflow_prompts"] = {
                 name: directory.joinpath(f"{name}.md").read_text()
-                for name in ("common", *STAGES)
+                for name in ("common", *STAGES, *(["03_pca"] if state.run_info.get("pca_version") else []))
             }
         self.bundle = state.run_info["workflow_prompts"]
-        if set(self.bundle) != {"common", *STAGES}:
+        expected = {"common", *STAGES, *(["03_pca"] if state.run_info.get("pca_version") else [])}
+        if set(self.bundle) != expected:
             raise ValueError("Unsupported staged prompt bundle.")
 
     @property
     def stage(self):
         return self.data.active_stage
+
+    def pca_requirement(self):
+        scope = self.state.workflow_plans.get(self.data.plan_id)
+        return getattr(scope, "pca_requirement", "disabled") if self.state.run_info.get("pca_version") else "disabled"
+
+    def in_pca_block(self):
+        return self.stage == STAGES[2] and self.pca_requirement() != "disabled" and not self.data.pca_reviewed
+
+    def pca_descriptors(self):
+        from .pca import descriptor
+        return [descriptor(result) for result in self.state.pca_attempts.values()
+                if result["plan_id"] == self.data.pca_plan_id] if self.data.pca_plan_id else []
+
+    def plot_descriptors(self):
+        return [{key: value for key, value in self.state.plot_results[pid].items()
+                 if key in {"plot_id", "status", "kind", "source_id", "selected_count", "pages_expected",
+                            "figure_ids", "artifacts", "metadata_artifact_id", "failure_reason"}}
+                for pid in self.data.plot_result_ids]
 
     def allowed_tools(self):
         allowed = COMMON_TOOLS | STAGE_TOOLS[self.stage]
@@ -48,10 +68,14 @@ class Workflow:
             allowed = allowed - {"summarize_dataset"}
         if not self.state.run_info.get("univariate_version"):
             allowed = allowed - {"inspect_univariate"}
+        if self.in_pca_block():
+            allowed = COMMON_TOOLS | PCA_TOOLS
+        elif self.stage == STAGES[2] and self.state.workflow_plans.get(self.data.plan_id) and self.state.workflow_plans[self.data.plan_id].analysis_kind == "descriptive":
+            allowed = COMMON_TOOLS
         return allowed
 
     def prompt(self):
-        return self.bundle["common"] + "\n\n" + self.bundle[self.stage] + "\n\n" + (
+        return self.bundle["common"] + "\n\n" + self.bundle["03_pca" if self.in_pca_block() else self.stage] + "\n\n" + (
             "Stage protocol: use submit_stage_assessment to request completion of stages 01–04. "
             "The runtime validates required evidence before advancing. In stage 05, "
             "finish_analysis validates, saves the final report, and closes the workflow. "
@@ -63,6 +87,22 @@ class Workflow:
         result = [aid for aid, artifact in self.state.artifacts.items()
                   if artifact["kind"] in {"input_values", "input_metadata"}]
         result.extend(self.data.diagnostic_ids)
+        if self.data.pca_diagnostic_id:
+            diagnostic = self.state.pca_diagnostics[self.data.pca_diagnostic_id]
+            result.extend(diagnostic["artifacts"].values())
+            result.append(diagnostic["metadata_artifact_id"])
+        for attempt in self.pca_descriptors():
+            result.extend(attempt["artifacts"].values())
+            result.append(attempt["metadata_artifact_id"])
+        if self.data.pca_skip:
+            result.append(self.data.pca_skip["artifact_id"])
+        for plot in self.plot_descriptors():
+            result.extend(plot["artifacts"].values())
+            if plot.get("metadata_artifact_id"):
+                result.append(plot["metadata_artifact_id"])
+            for aid in plot["figure_ids"]:
+                result.append(aid)
+                result.extend(self.state.artifacts[aid].get("plot_artifact_ids", {}).values())
         for sid in self.data.summary_ids:
             summary = self.state.descriptive_summaries[sid]
             result.extend(summary["artifacts"].values())
@@ -88,6 +128,10 @@ class Workflow:
     def evidence_ids(self):
         ids = set(self.current_artifacts()) | set(self.data.comparison_ids)
         ids.update(self.data.summary_ids)
+        ids.update(self.data.pca_ids)
+        ids.update(self.data.plot_result_ids)
+        if self.data.pca_diagnostic_id:
+            ids.add(self.data.pca_diagnostic_id)
         ids.update(self.data.univariate_attempt_ids)
         if self.data.univariate_diagnostic_id:
             ids.add(self.data.univariate_diagnostic_id)
@@ -100,7 +144,8 @@ class Workflow:
 
     def plan_refs(self):
         return {"workflow": self.data.plan_id, "preparation": self.data.preprocessing_plan_id,
-                "univariate": self.data.univariate_plan_id, "figures": self.data.figure_plan_id}
+                "univariate": self.data.univariate_plan_id, "figures": self.data.figure_plan_id,
+                "pca": self.data.pca_plan_id}
 
     def summary_descriptors(self):
         fields = {"summary_id", "dataset_id", "scale", "grouping", "value_policy", "include_mode",
@@ -125,7 +170,7 @@ class Workflow:
         keys = {"kind", "source_id", "features", "scale", "centering", "scaling",
                 "sample_order", "selection_rationale", "caption", "plot_artifact_ids",
                 "omitted_values", "clipped_zero_p", "paired_lines", "display_notes",
-                "selected_features", "imputed_values", "labels", "group_order"}
+                "selected_features", "imputed_values", "labels", "group_order", "page", "page_count", "selection"}
         return [{"artifact_id": aid, **{key: value for key, value in self.state.artifacts[aid].items()
                                        if key in keys}} for aid in [*self.data.diagnostic_figure_ids, *self.data.figure_ids]]
 
@@ -190,7 +235,9 @@ class Workflow:
         result["limitations"] = result["limitations"][:20]
         result["descriptive_summaries"] = result["descriptive_summaries"][:20]
         result["univariate_results"] = result["univariate_results"][:20]
-        result["figures"] = result["figures"][:12]
+        result["figures"] = result["figures"][:20]
+        result["pca_results"] = result["pca_results"][:10]
+        result["plot_results"] = result["plot_results"][:12]
         return result
 
     def context(self):
@@ -202,6 +249,11 @@ class Workflow:
                 "descriptive_version": self.state.run_info.get("descriptive_version", 0),
                 "univariate_version": self.state.run_info.get("univariate_version", 0),
                 "visualization_version": self.state.run_info.get("visualization_version", 0),
+                "pca_version": self.state.run_info.get("pca_version", 0),
+                "analysis_block": "pca" if self.in_pca_block() else "univariate",
+                "pca_requirement": self.pca_requirement(), "pca_reviewed": self.data.pca_reviewed,
+                "pca_diagnostic_id": self.data.pca_diagnostic_id, "pca_results": self.pca_descriptors()[:10],
+                "pca_skip": self.data.pca_skip, "plot_results": self.plot_descriptors()[:12],
                 "figures": self.figure_descriptors()[:20],
                 "figure_count": len(self.data.figure_ids) + len(self.data.diagnostic_figure_ids),
                 "univariate_diagnostic_id": self.data.univariate_diagnostic_id,
@@ -285,6 +337,27 @@ class Workflow:
         self.data.univariate_plan_id = self._register_plan("u", plan, self.state.univariate_plans)
         return {"plan_id": self.data.univariate_plan_id, "plan": plan.model_dump()}
 
+    def set_pca_plan(self, plan):
+        if self.data.pca_plan_id:
+            raise ValueError("Request a statistical-stage revision before replacing the PCA plan.")
+        if plan.dataset_id != self.data.dataset_id or plan.diagnostic_id != self.data.pca_diagnostic_id:
+            raise ValueError("Use the current PCA diagnostic and prepared dataset.")
+        diagnostic = self.state.pca_diagnostics[plan.diagnostic_id]
+        if (plan.scale != diagnostic["scale"] or plan.features != diagnostic["requested_features"]
+                or not diagnostic["viable"] or plan.components > diagnostic["max_components"]):
+            raise ValueError("PCA plan must match viable inspected inputs and component limits.")
+        self.data.pca_plan_id = self._register_plan("ppc", plan, self.state.pca_plans)
+        return {"plan_id": self.data.pca_plan_id, "plan": plan.model_dump()}
+
+    def skip_pca(self, rationale):
+        if self.pca_requirement() != "optional" or self.data.pca_ids or self.data.pca_skip:
+            raise ValueError("Only an unresolved optional PCA can be skipped explicitly.")
+        filename = f"pca_skip_r{self.data.revision}.json"
+        self.state.write_json(filename, {"status": "skipped", "rationale": rationale})
+        artifact = self.state.evidence.register_file(filename, "pca_skip")
+        self.data.pca_skip = {"status": "skipped", "rationale": rationale, "artifact_id": artifact.id}
+        return self.data.pca_skip
+
     def set_figure_plan(self, plan):
         if self.data.figure_plan_id:
             raise ValueError("Request a visualization revision before replacing its plan.")
@@ -300,16 +373,26 @@ class Workflow:
         kinds = {"distributions", "boxplot", "volcano"}
         if self.state.run_info.get("visualization_version"):
             kinds.add("heatmap")
+        if self.state.run_info.get("pca_version"):
+            kinds.update({"pca_scores", "pca_scree", "pca_loadings"})
         if args.kind not in kinds:
             raise ValueError("Unsupported figure for this workflow version.")
         if self.stage == STAGES[1]:
             if args.kind not in {"distributions", "boxplot"} or args.source_id not in {"raw", self.data.dataset_id}:
                 raise ValueError("Preparation permits only diagnostic distributions and boxplots.")
+        elif args.kind.startswith("pca_"):
+            if args.source_id not in self.data.pca_ids or self.state.pcas[args.source_id]["status"] != "completed":
+                raise ValueError("PCA figures require a current completed PCA result.")
         elif args.kind == "volcano":
             if args.source_id not in self.data.comparison_ids:
                 raise ValueError("Volcano plots require a current comparison.")
         elif args.source_id != self.data.dataset_id:
             raise ValueError("Presentation figures require the current prepared dataset.")
+        if getattr(args, "selection_mode", "explicit") == "significant":
+            comparison = self.state.comparisons.get(args.comparison_id)
+            if (args.comparison_id not in self.data.comparison_ids or not comparison
+                    or comparison["dataset_id"] != args.source_id):
+                raise ValueError("Significance selection requires a current comparison from the same dataset.")
 
     def validate(self, *, final=False):
         self.state.evidence.validate()
@@ -337,22 +420,32 @@ class Workflow:
                     if not self.has_summary(dataset_id, scale, policy):
                         errors.append(f"Missing full group-wise summary: {dataset_id}/{scale}/{policy}.")
         elif stage == STAGES[2]:
-            if not data.univariate_plan_id or not data.comparison_ids:
-                errors.append("Execute the current univariate plan before advancing.")
-            elif not any(self.state.comparisons[cid].get("univariate_plan_id") == data.univariate_plan_id
-                         for cid in data.comparison_ids):
-                errors.append("The current statistical plan has not been tested.")
-            if self.state.run_info.get("univariate_version") and not any(
-                record["status"] == "completed" and record["plan_id"] == data.univariate_plan_id
-                and record["correction_completed"] for record in self.univariate_descriptors()
-            ):
-                errors.append("The current plan requires a complete univariate audit and multiplicity correction.")
+            if self.in_pca_block():
+                if not data.pca_skip and not any(result["status"] == "completed" for result in self.pca_descriptors()):
+                    errors.append("Complete the current PCA plan or explicitly skip an optional PCA.")
+            elif self.state.workflow_plans[data.plan_id].analysis_kind == "two_group":
+                if not data.univariate_plan_id or not data.comparison_ids:
+                    errors.append("Execute the current univariate plan before advancing.")
+                elif not any(self.state.comparisons[cid].get("univariate_plan_id") == data.univariate_plan_id
+                             for cid in data.comparison_ids):
+                    errors.append("The current statistical plan has not been tested.")
+                if self.state.run_info.get("univariate_version") and not any(
+                    record["status"] == "completed" and record["plan_id"] == data.univariate_plan_id
+                    and record["correction_completed"] for record in self.univariate_descriptors()
+                ):
+                    errors.append("The current plan requires a complete univariate audit and multiplicity correction.")
         elif stage == STAGES[3]:
             if not data.figure_plan_id:
                 errors.append("Register a figure plan first.")
             else:
                 plan = self.state.figure_plans[data.figure_plan_id]
                 for figure in plan.figures:
+                    if self.state.run_info.get("visualization_version") == 2 and figure.kind == "heatmap":
+                        from .heatmaps import complete_plot
+                        if not any(complete_plot(self.state, self.state.plot_results[pid], figure, data.figure_ids)
+                                   for pid in data.plot_result_ids):
+                            errors.append(f"Missing complete heatmap selection/pages: {figure.source_id}.")
+                        continue
                     if not any(self.state.artifacts[aid]["kind"] == figure.kind
                                and self.state.artifacts[aid].get("source_id") == figure.source_id
                                and self.state.artifacts[aid].get("features", []) == figure.features
@@ -399,7 +492,8 @@ class Workflow:
             issues=self.issues(), limitations=self.limitations(),
             descriptive_summaries=self.summary_descriptors(),
             univariate_results=self.univariate_descriptors(),
-            figures=self.figure_descriptors(),
+            figures=self.figure_descriptors(), pca_results=self.pca_descriptors(),
+            plot_results=self.plot_descriptors(),
         )
         relative = f"stages/{self.stage}/{report.attempt_id}/handoff.json"
         self.state.write_json(relative, handoff.model_dump())
@@ -433,13 +527,22 @@ class Workflow:
             self.state.status = "needs_input"
             return {"status": "needs_input", "summary": assessment.summary}
         validation = self.validate()
+        if self.in_pca_block() and validation["valid"]:
+            filename = f"stages/{self.stage}/{report.attempt_id}/pca_assessment.json"
+            self.state.write_json(filename, assessment.model_dump())
+            self.state.evidence.register_file(filename, "pca_assessment", parent_ids=self.current_artifacts())
+            self.data.pca_reviewed = True
+            if self.state.workflow_plans[self.data.plan_id].analysis_kind == "two_group":
+                return {"completed_block": "pca", "next_block": "univariate", "stage": self.stage}
+            report.limitations.append("Univariate testing omitted by the registered descriptive objective.")
         if not validation["valid"]:
             raise ValueError(" ".join(validation["errors"]))
         if self.stage == STAGES[4]:
             return {"assessment_recorded": True, "next_action": "finish_analysis"}
         self._close()
         while ((self.stage == STAGES[2] and
-                self.state.workflow_plans[self.data.plan_id].analysis_kind == "descriptive") or
+                self.state.workflow_plans[self.data.plan_id].analysis_kind == "descriptive"
+                and self.pca_requirement() == "disabled") or
                (self.stage == STAGES[3] and
                 not self.state.workflow_plans[self.data.plan_id].required_figures)):
             self.activate()
@@ -474,12 +577,18 @@ class Workflow:
             self.data.dataset_id = None
             self.data.preparation_summary = {}
         if index <= 2:
+            self.data.pca_plan_id = None
+            self.data.pca_diagnostic_id = None
+            self.data.pca_ids = []
+            self.data.pca_reviewed = False
+            self.data.pca_skip = {}
             self.data.univariate_plan_id = None
             self.data.univariate_diagnostic_id = None
             self.data.univariate_attempt_ids = []
             self.data.comparison_ids = []
         self.data.figure_plan_id = None
         self.data.figure_ids = []
+        self.data.plot_result_ids = []
         self.data.active_stage = args.target
         return {"revision": self.data.revision, "stage": self.stage,
                 "purpose": "exploratory" if self.state.comparisons else "not_yet_tested"}

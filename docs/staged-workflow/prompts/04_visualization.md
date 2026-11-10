@@ -35,8 +35,9 @@ a comparison-derived figure such as a volcano plot.
    tools, do not claim to have inspected the rendered image.
 
 Supported initial figures are distributions, boxplots, volcano plots, and optional
-non-clustered heatmaps. PCA plots, dendrograms, embeddings, correlation maps, lipid
-networks, and unsupported significance annotations are excluded.
+non-clustered heatmaps. Runtime version 2 also supports scores, explained-variance
+and loading plots from a current completed PCA. Dendrograms, embeddings, correlation
+maps, lipid networks and unsupported significance annotations remain excluded.
 
 ## Tools and permitted use
 
@@ -117,3 +118,33 @@ If generation fails, committed source/display checkpoints and a failure record
 remain available. A failed or empty figure does not satisfy the plan. Correct the
 underlying issue through the appropriate revision; do not weaken a requirement
 to close the stage. Valid upstream numerical results remain available.
+
+
+## Version 2 selection, pagination and PCA figures
+
+Check visualization_version. For version 2, heatmap selection_mode is explicit
+with a nonempty features list, or significant with comparison_id and an empty
+features list. Significant selection is resolved in Python from valid saved
+comparison rows whose adjusted p is below that comparison's registered alpha.
+Use the same prepared dataset as the comparison. Do not recompute tests, change
+the correction family, substitute raw p-values or silently change thresholds.
+
+The runtime saves every candidate's inclusion/exclusion reason, numerical result,
+criterion, source references and exact display order. Selection uses the same data
+as inference: visual separation is a descriptive illustration, not independent
+confirmation. Do not use the selected list for the main PCA. All selected features
+are shown in pages of rows_per_page (default 40), without a hidden top-feature cap.
+Completion requires all pages of a successful plot job. Inspect selected_count,
+pages_expected, artifact_ids and status. A justified skipped_no_significant outcome
+is valid when no eligible feature meets the criterion; an empty image or failed
+page is not success. The report links selections and pagination outcomes.
+
+PCA figure kinds are pca_scores, pca_scree and pca_loadings, with source_id equal
+to a current completed PCA ID. These tools read saved PCA results and never refit.
+Scores use the two requested distinct component numbers and label axes with saved
+variance percentages. Coloring uses group metadata only after the fit. Scree plots
+show the calculated components and their cumulative variance, which need not reach
+100 percent. Loadings use unit eigenvector weights, not inferred correlations;
+choose an explicit feature list or document the deterministic largest-absolute-
+weight selection (max_loading_features, ties by feature name). No new significance
+annotations, ellipses or biological clustering claims are created.

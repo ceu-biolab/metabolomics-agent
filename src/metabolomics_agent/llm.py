@@ -186,6 +186,11 @@ class LegacyDemoProvider:
 class DemoProvider(LegacyDemoProvider):
     """Scripted five-stage driver; preserves legacy replay for reference tests."""
 
+    def __init__(self, *, pca=False, pca_only=False):
+        super().__init__()
+        self.pca_enabled = pca or pca_only
+        self.pca_only = pca_only
+
     def complete(self, messages, tools, *, max_tokens, timeout):
         if not any(tool["function"]["name"] == "get_stage_context" for tool in tools):
             return super().complete(messages, tools, max_tokens=max_tokens, timeout=timeout)
@@ -198,6 +203,9 @@ class DemoProvider(LegacyDemoProvider):
         descriptive = bool(context.get("descriptive_version"))
         audited_univariate = bool(context.get("univariate_version"))
         audited_figures = bool(context.get("visualization_version"))
+        extended = context.get("visualization_version") == 2
+        pca = self.pca_enabled and bool(context.get("pca_version"))
+        pca_only = pca and self.pca_only
         figures = [
             {"kind": "distributions", "source_id": "d001"},
             {"kind": "volcano", "source_id": "c001"},
@@ -209,13 +217,28 @@ class DemoProvider(LegacyDemoProvider):
                             "features": ["lipid_01", "lipid_02", "lipid_03"],
                             "centering": "feature_mean", "scaling": "feature_sd",
                             "selection_rationale": "Show the first three declared features in source order without significance selection or clustering."})
+        if extended and not pca_only:
+            figures[-1] = {"kind": "heatmap", "source_id": "d001", "scale": "testing",
+                           "selection_mode": "significant", "comparison_id": "c001",
+                           "centering": "feature_mean", "scaling": "feature_sd",
+                           "selection_rationale": "Display all valid features with adjusted p below the saved comparison alpha; no independent validation is implied."}
+        if pca_only:
+            figures = [figure for figure in figures if figure["kind"] in {"distributions", "boxplot"}]
+        if pca:
+            figures.extend({"kind": kind, "source_id": "pc001",
+                            "selection_rationale": "Describe the exploratory PCA fitted to all retained features without p-value selection."}
+                           for kind in ["pca_scores", "pca_scree", "pca_loadings"])
         steps = [
             ("set_workflow_plan", {
-                "objective": "Compare the synthetic condition and control groups with an auditable univariate analysis.",
-                "rationale": "Prepare the quantified table, compare the two independent groups, and show diagnostic and result figures.",
-                "required_figures": ["distributions", "volcano", "boxplot"],
+                "objective": ("Explore the synthetic prepared feature space using descriptive statistics and exploratory PCA." if pca_only else
+                              "Compare the synthetic condition and control groups with an auditable univariate analysis."),
+                "rationale": ("Describe the prepared table and its exploratory PCA without inferential group comparisons." if pca_only else
+                              "Prepare the quantified table, compare the two independent groups, and show diagnostic and result figures."),
+                "required_figures": (["distributions", "boxplot"] if pca_only else ["distributions", "volcano", "boxplot"])
+                                    + (["pca_scores", "pca_scree", "pca_loadings"] if pca else []),
+                **({"pca_requirement": "required", "analysis_kind": "descriptive" if pca_only else "two_group"} if pca else {}),
             }),
-            ("submit_stage_assessment", {"summary": "The supported two-group objective and required figures are registered."}),
+            ("submit_stage_assessment", {"summary": "The supported objective, analysis requirements and figures are registered."}),
             ("inspect_dataset", {}),
             *([("summarize_dataset", {"dataset_id": "raw", "scale": "original",
                                        "value_policy": "observed_only"})] if descriptive else []),
@@ -231,16 +254,26 @@ class DemoProvider(LegacyDemoProvider):
                 "summary": "Preparation and its checkpoints are complete; imputation uncertainty remains a limitation.",
                 "limitations": ["Median imputation assumes that observed values are informative."],
             }),
-            *([("inspect_univariate", {"dataset_id": "d001"})] if audited_univariate else []),
-            ("set_univariate_plan", {
-                "dataset_id": "d001", "rationale": "Compare log-scale means with Welch and BH correction across retained features.",
-                "test": "welch_t", "correction": "fdr_bh",
-                **({"diagnostic_id": "uv001"} if audited_univariate else {}),
-            }),
-            ("compare_groups", {"dataset_id": "d001", "plan_id": "u001"}),
-            ("submit_stage_assessment", {"summary": "The prespecified univariate comparison has been saved."}),
+            *([("inspect_pca_inputs", {"dataset_id": "d001", "scale": "testing"}),
+               ("set_pca_plan", {"dataset_id": "d001", "diagnostic_id": "pv001",
+                    "rationale": "Explore all retained log-scale features with declared autoscaling, independently of group-comparison outcomes.",
+                    "scale": "testing", "components": 2, "scaling": "auto", "scaling_ddof": 0}),
+               ("run_pca", {"dataset_id": "d001", "plan_id": "ppc001"}),
+               ("submit_stage_assessment", {"summary": "Exploratory PCA and its independent input representation are saved.",
+                    "limitations": ["PCA separation is exploratory, and ordinary PCA does not model paired dependence."]})] if pca else []),
+            *([] if pca_only else [
+                *([("inspect_univariate", {"dataset_id": "d001"})] if audited_univariate else []),
+                ("set_univariate_plan", {
+                    "dataset_id": "d001", "rationale": "Compare log-scale means with Welch and BH correction across retained features.",
+                    "test": "welch_t", "correction": "fdr_bh",
+                    **({"diagnostic_id": "uv001"} if audited_univariate else {}),
+                }),
+                ("compare_groups", {"dataset_id": "d001", "plan_id": "u001"}),
+                ("submit_stage_assessment", {"summary": "The prespecified univariate comparison has been saved."}),
+            ]),
             ("set_figure_plan", {
-                "rationale": "Show preprocessing effects, adjusted-p results, and individual values for two illustrative features.",
+                "rationale": ("Show preparation, illustrative individual values and the saved exploratory PCA." if pca_only else
+                              "Show preprocessing effects, adjusted-p results, individual values and any requested PCA."),
                 "figures": figures,
             }),
             *[("make_plot", figure) for figure in figures],
@@ -250,12 +283,14 @@ class DemoProvider(LegacyDemoProvider):
         if self.step < len(steps):
             name, arguments = steps[self.step]
         else:
-            comparison = next(value for value in values if value.get("comparison_id") == "c001")
+            comparison = next((value for value in values if value.get("comparison_id") == "c001"), None)
+            text = ("Exploratory PCA was fitted to the retained prepared features without group labels."
+                    if pca_only else f"The analysis tested {comparison['features_tested']} features; "
+                    f"{comparison['significant_features']} had BH-adjusted p < 0.05.")
             name, arguments = "finish_analysis", {
                 "findings": [{
-                    "text": f"The analysis tested {comparison['features_tested']} features; "
-                            f"{comparison['significant_features']} had BH-adjusted p < 0.05.",
-                    "evidence_ids": ["c001"],
+                    "text": text,
+                    "evidence_ids": ["pc001" if pca_only else "c001"],
                 }],
                 "limitations": ["Synthetic data and scripted decisions; no live LLM was evaluated.",
                                 "Imputation uncertainty is not propagated into inference."],

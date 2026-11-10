@@ -19,8 +19,9 @@ do not describe inaccessible inputs as successfully inspected.
 
 1. State the main question and required outputs in concrete terms. Distinguish a
    descriptive objective, a two-group comparison, and exact tutorial reproduction.
-2. Check that the design and requested capabilities are supported. Multivariate
-   analysis and batch/QC correction are excluded, even if present in an older run.
+2. Check supported design and capabilities. Exploratory PCA is available only
+   when exposed by the runtime; other multivariate methods and batch/QC correction
+   remain excluded.
 3. Identify essential unknowns, including pairing, comparison direction, or whether
    inputs were already normalized. Unknown normalization does not justify silently
    normalizing again. Not every unknown blocks a descriptive assessment.
@@ -28,7 +29,10 @@ do not describe inaccessible inputs as successfully inspected.
    finalizing its method choices. Univariate testing must have a recorded plan
    before execution. Do not impose defaults as if they were study facts.
 5. Define completion requirements from the objective. A descriptive workflow may
-   omit testing and volcano plots. No workflow may require PCA in this version.
+   omit testing and volcano plots. Set pca_requirement to disabled, optional or
+   required according to the user objective. Required PCA figures require required
+   PCA. A descriptive workflow may request PCA without univariate tests. PCA
+   choices will be frozen after preparation diagnostics.
 6. Identify analyses intended as primary and planned sensitivity analyses. Any
    later data-informed changes must be tracked through revision requests.
 

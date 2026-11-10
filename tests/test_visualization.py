@@ -233,7 +233,7 @@ def test_restoration_retains_figure_sources_and_versioned_contract(plots):
     state = tools.state
     state.workflow.interrupt("Restore plotted evidence.")
     restored = RunState.restore(state.output_dir)
-    assert restored.run_info["visualization_version"] == 1
+    assert restored.run_info["visualization_version"] == 2
     assert restored.workflow.figure_descriptors()[0]["plot_artifact_ids"] == result["plot_artifact_ids"]
     assert restored.workflow.data.figure_ids == [result["artifact_id"]]
     assert restored.figure_plans["f001"].figures[0].scale == "testing"

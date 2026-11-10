@@ -29,7 +29,10 @@ def _long(values, state, features, representation):
     return result
 
 
-def _sources(state, args):
+def _sources(state, args, resolved_features=None):
+    if args.kind.startswith("pca_"):
+        from .pca import plot_source
+        return plot_source(state, args)
     dataset = None if args.source_id == "raw" else state.datasets.get(args.source_id)
     inputs = {artifact["kind"]: aid for aid, artifact in state.artifacts.items()
               if artifact["kind"] in {"input_values", "input_metadata"}}
@@ -50,7 +53,7 @@ def _sources(state, args):
         if dataset is None and args.scale != "concentrations":
             raise ValueError("Raw plots use the original input scale; no test representation exists yet.")
         values = state.raw if dataset is None else getattr(dataset, args.scale)
-        features = _selected(list(values), args.features)
+        features = _selected(list(values), resolved_features if resolved_features is not None else args.features)
         if dataset:
             key = "testing" if args.scale == "testing" else "concentrations"
             parents.append(dataset.artifact_ids[key])
@@ -76,6 +79,11 @@ def _sources(state, args):
 
 
 def _display(state, args, source, features, metadata):
+    if args.kind.startswith("pca_"):
+        if args.kind == "pca_scree":
+            metadata["display_notes"].append("Variance covers calculated components only; the unrepresented remainder is saved in PCA metadata.")
+        metadata["display_notes"].extend(metadata["methods"]["notes"])
+        return source.copy()
     if args.kind == "volcano":
         valid = (np.isfinite(source.log2_fold_change) & np.isfinite(source.adjusted_p_value)
                  & source.adjusted_p_value.between(0, 1))
@@ -138,6 +146,26 @@ def _render(state, args, display, features, metadata):
     if display.empty:
         raise ValueError("No drawable values remain; an empty figure cannot meet a figure requirement.")
     order = metadata["group_order"]
+    if args.kind.startswith("pca_"):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        if args.kind == "pca_scores":
+            first, second = metadata["methods"]["score_columns"]
+            sns.scatterplot(data=display, x=first, y=second, hue=state.config.group_column,
+                            hue_order=order, s=55, ax=ax)
+            ax.set(title="Exploratory PCA scores")
+        elif args.kind == "pca_scree":
+            positions = np.arange(len(display))
+            ax.bar(positions, 100*display.explained_variance_ratio, color="#647c91", label="Per component")
+            ax.plot(positions, 100*display.cumulative_variance_ratio, marker="o", color="#bf3e36", label="Cumulative")
+            ax.set_xticks(positions, labels=display.component)
+            ax.set(title="PCA variance of calculated components", ylim=(0, 100))
+            ax.legend()
+        else:
+            ax.barh(display.feature.iloc[::-1], display.weight.iloc[::-1], color="#647c91")
+            ax.axvline(0, color="gray", linewidth=1)
+            ax.set(title=f"PCA loadings: {metadata['methods']['loading_component']}")
+        ax.set(xlabel=metadata["labels"]["x"], ylabel=metadata["labels"]["y"])
+        return fig
     if args.kind == "volcano":
         fig, ax = plt.subplots(figsize=(8, 6))
         ax.scatter(display.log2_fold_change, display.minus_log10_adjusted_p,
@@ -196,9 +224,11 @@ def _render(state, args, display, features, metadata):
     return fig
 
 
-def make_audited_plot(state, args):
+def make_audited_plot(state, args, *, resolved_features=None, selection=None, selection_artifacts=None, page=1, page_count=1):
     sns.set_theme(style="whitegrid", context="notebook")
-    source, features, parents, methods, labels = _sources(state, args)
+    source, features, parents, methods, labels = _sources(state, args, resolved_features)
+    if selection_artifacts:
+        parents.extend(selection_artifacts.values())
     provenance = {"parent_ids": parents, "scale": args.scale,
                   "plan_id": state.workflow.data.figure_plan_id,
                   "dataset_id": args.source_id if args.source_id in state.datasets else None}
@@ -206,7 +236,8 @@ def make_audited_plot(state, args):
                 "selected_features": features, "methods": methods, "labels": labels,
                 "group_order": [state.config.reference_group, state.config.treatment_group],
                 "omitted_values": 0, "clipped_zero_p": 0, "paired_lines": 0, "display_notes": [],
-                "imputed_values": int(source["imputed"].sum()) if "imputed" in source else 0,
+                "imputed_values": (methods.get("imputed_cells", 0) if args.kind.startswith("pca_")
+                                   else int(source["imputed"].sum()) if "imputed" in source else 0),
                 "caption": args.caption or f"{args.kind} from {args.source_id}; {args.selection_rationale}",
                 "render_parameters": {"theme": "whitegrid", "context": "notebook", "dpi": 160,
                     "histogram_bins": 18, "boxplot_whis": 1.5, "point_jitter": False,
@@ -216,6 +247,14 @@ def make_audited_plot(state, args):
                     "package_versions": {key: value for key, value in state.run_info["packages"].items()
                                          if key in {"numpy", "pandas", "matplotlib", "seaborn"}}},
                 "artifacts": {}}
+    if selection is not None and selection.get("mode") == "significant" and not args.caption:
+        metadata["caption"] = (f"Heatmap of {selection['selected_count']} selected variables: adjusted p < "
+            f"{selection['alpha']} ({selection['correction']}) from {selection['comparison_id']}; "
+            f"page {page}/{page_count}. Selection and display use the same study data.")
+    if selection is not None:
+        metadata.update(selection=selection, page=page, page_count=page_count)
+        if selection.get("caveat"):
+            metadata["display_notes"].append(selection["caveat"])
     if metadata["imputed_values"]:
         metadata["display_notes"].append(f"Prepared source includes {metadata['imputed_values']} imputed values; these are not additional original measurements.")
     with state.evidence.operation("save_plot_source", inputs=parents, parameters=args.model_dump()):
@@ -257,7 +296,7 @@ def make_audited_plot(state, args):
                                                    individual_samples=True)
             fig = _render(state, args, display, features, metadata)
             fig.tight_layout()
-            artifact_ids = {**metadata["artifacts"], "configuration": config.id}
+            artifact_ids = {**metadata["artifacts"], **(selection_artifacts or {}), "configuration": config.id}
             aggregate = {**args.model_dump(), "caption": metadata["caption"],
                          "labels": metadata["labels"], "group_order": metadata["group_order"],
                          "selected_features": features, "imputed_values": metadata["imputed_values"],
@@ -265,6 +304,8 @@ def make_audited_plot(state, args):
                          "clipped_zero_p": metadata["clipped_zero_p"], "paired_lines": metadata["paired_lines"],
                          "display_notes": metadata["display_notes"], "figure_spec": args.model_dump(),
                          "parent_ids": list(artifact_ids.values())}
+            if selection is not None:
+                aggregate.update(selection=selection, page=page, page_count=page_count)
             aid = state.figure(fig, args.kind, aggregate)
     except Exception as error:
         # A failed image never satisfies coverage; retain the committed source and any display table.

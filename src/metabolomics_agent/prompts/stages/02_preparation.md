@@ -77,8 +77,10 @@ tables and metadata remain local; the tool initially returns artifact references
 scope, conventions, and counts of undefined statistics rather than sample data.
 Do not classify an expected non-applicable CV as an execution failure.
 
-Do not require complete data merely to satisfy a removed PCA step. Statistical
-eligibility depends on the selected method and observed counts. A heatmap, if
+PCA is optional according to the workflow plan. If requested, it needs complete
+finite selected features and sufficient rank; do not impute merely to hide a
+failed PCA diagnostic. Document the missing-value policy and its uncertainty.
+Univariate eligibility depends on its method and original observed counts. A heatmap, if
 requested later, may need its own explicitly registered complete plotting matrix.
 
 ## Tools and permitted use

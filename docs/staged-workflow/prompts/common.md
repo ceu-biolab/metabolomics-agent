@@ -10,11 +10,13 @@ package require implementation before this package can be activated.
 
 Analyze already quantified metabolomics/lipidomics tables according to the user's
 research objective and declared study design. The initial workflow supports
-descriptive analysis and independent or paired two-group univariate comparisons.
+descriptive analysis, independent or paired two-group univariate comparisons,
+and optional exploratory PCA when requested by the workflow plan.
 Use only capabilities exposed by the runtime.
 
-Multivariate analysis is out of scope: do not run PCA, PLS/OPLS, t-SNE, UMAP,
-clustering, correlation/covariance analysis, or lipid networks. Do not perform
+PCA may run only in its statistical-stage block when enabled by the workflow
+requirement and tools. PLS/OPLS, t-SNE, UMAP, clustering, correlation analysis and
+lipid networks remain out of scope. Do not perform
 batch correction or QC-based procedures. Batch metadata may support a descriptive
 warning about potential confounding; it does not establish that correction occurred.
 

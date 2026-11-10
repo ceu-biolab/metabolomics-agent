@@ -46,6 +46,8 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     demo = commands.add_parser("demo", help="Offline synthetic end-to-end demo; no API/key/spending")
     demo.add_argument("--output", type=Path)
+    demo.add_argument("--pca", action="store_true", help="Also run exploratory PCA and its figures")
+    demo.add_argument("--pca-only", action="store_true", help="Descriptive/PCA objective without univariate tests")
     example = commands.add_parser("make-example", help="Generate a synthetic dataset and study.json")
     example.add_argument("--output", type=Path, default=Path("examples/synthetic"))
     run = commands.add_parser("run", help="Run the adaptive agent with a live LLM")
@@ -63,6 +65,7 @@ def main(argv=None):
     benchmark.add_argument("--output", type=Path)
     schemas = commands.add_parser("tool-schemas", help="Print staged function schemas (coordination by default)")
     schemas.add_argument("--stage", choices=STAGES, default=STAGES[0])
+    schemas.add_argument("--analysis-block", choices=["univariate", "pca"], default="univariate")
     args = parser.parse_args(argv)
     try:
         if args.command == "make-example":
@@ -71,7 +74,7 @@ def main(argv=None):
         if args.command == "tool-schemas":
             from .tools import ToolRegistry
 
-            print(dumps(ToolRegistry(None).schemas(stage=args.stage)))
+            print(dumps(ToolRegistry(None).schemas(stage=args.stage, analysis_block=args.analysis_block)))
             return 0
         if args.command == "reference-check":
             summary = reference_check(args.dataset, args.output or default_output("reference"))
@@ -83,8 +86,10 @@ def main(argv=None):
                 study_file = generate_example(Path(temporary) / "synthetic")
                 study = StudyConfig.model_validate_json(study_file.read_text())
                 state = RunState(study, study_file.parent, args.output or default_output("demo"))
-                result = Agent(state, DemoProvider(), LLMConfig(model="offline-scripted-demo",
-                               max_total_tokens=500000)).run(study.objective)
+                result = Agent(state, DemoProvider(pca=args.pca, pca_only=args.pca_only), LLMConfig(model="offline-scripted-demo",
+                               max_turns=48, max_tool_calls=64, max_total_tokens=500000)).run(
+                                   "Explore the synthetic prepared feature space using descriptive statistics and exploratory PCA."
+                                   if args.pca_only else study.objective)
         else:
             load_dotenv(args.env_file, override=False)
             config = llm_config_from_env()

@@ -14,10 +14,11 @@ from .plots import make_plot
 from .report import finish_analysis
 from .evidence_models import StageIssue
 from .state import RunState, clean_json
-from .workflow import COMMON_TOOLS, STAGES, STAGE_TOOLS
+from .workflow import COMMON_TOOLS, PCA_TOOLS, STAGES, STAGE_TOOLS
 from .workflow_models import (CompareArgs, FigurePlan, FigurePlanV1, FigureSpec, FigureSpecV1, PreprocessingPlan,
                               ReadStageArgs, RevisionArgs, StageAssessment,
-                              SummaryArgs, UnivariatePlan, UnivariatePlanV1, WorkflowPlan, WorkflowPlanV1)
+                              SummaryArgs, UnivariatePlan, UnivariatePlanV1, WorkflowPlan, WorkflowPlanV1,
+                              WorkflowPlanV2, FigurePlanV2, FigureSpecV2, PCAPlan, PCAInputArgs, SkipPCAArgs)
 
 
 TOOL_DEFINITIONS = {
@@ -45,21 +46,25 @@ TOOL_DEFINITIONS = {
 }
 
 STAGED_DEFINITIONS = {
+    "inspect_pca_inputs": (PCAInputArgs, "Inspect current prepared PCA scale, counts, missingness and constant features without fitting or selecting by p-values."),
+    "set_pca_plan": (PCAPlan, "Freeze exploratory PCA source/diagnostic, features, scaling, SD convention and component count before fitting. Group labels do not enter the fit."),
+    "run_pca": (CompareArgs, "Execute the current PCA plan once; save source, independent PCA matrix, scaling, scores, eigenvector loadings, variance and model metadata."),
+    "skip_pca": (SkipPCAArgs, "Record a justified omission of optional PCA. Required PCA cannot be skipped."),
     "get_workflow_state": (InspectArgs, "Read current stage, plans, aggregate diagnostics, and requirements."),
     "get_stage_context": (InspectArgs, "Read the validated aggregate context and incoming handoff."),
     "read_stage_report": (ReadStageArgs, "Read a bounded stage report summary; sample tables remain local."),
-    "set_workflow_plan": (WorkflowPlanV1, "Register the objective, descriptive/two-group scope, and required figures."),
+    "set_workflow_plan": (WorkflowPlanV2, "Register the objective, descriptive/two-group scope, and required figures."),
     "set_preprocessing_plan": (PreprocessingPlan, "After inspection, record filtering, imputation, normalization, and transformation choices."),
     "preprocess": (PrepareArgs, "Execute the current preparation plan, saving local checkpoints and separate concentration/test scales. No PCA representation is generated."),
     "inspect_univariate": (DatasetArgs, "Inspect current test-scale counts, observed/imputed origins, complete pairs and normality diagnostics. Returns aggregate artifacts; does not execute group-comparison tests."),
     "set_univariate_plan": (UnivariatePlanV1, "After inspecting univariate inputs, register the diagnostic ID, test, two-sided alternative, including-imputed policy and within-comparison correction family. Later data-informed analyses are exploratory."),
     "compare_groups": (CompareArgs, "Execute the current univariate plan and save the full comparison table."),
-    "set_figure_plan": (FigurePlanV1, "Register current sources, feature selections and rationale, scale, display centering/scaling, order and captions. Supports distributions, boxplots, volcano and non-clustered heatmaps."),
-    "make_plot": (FigureSpecV1, "Save exact local sources, display values, configuration and image using the registered specification. Returns aggregate omissions and provenance only. Preparation allows diagnostic distributions/boxplots; heatmaps are display-only and require complete selected data."),
+    "set_figure_plan": (FigurePlanV2, "Register current sources, feature selections and rationale, scale, display centering/scaling, order and captions. Supports distributions, boxplots, volcano and non-clustered heatmaps."),
+    "make_plot": (FigureSpecV2, "Save exact local sources, display values, configuration and image using the registered specification. Returns aggregate omissions and provenance only. Preparation allows diagnostic distributions/boxplots; heatmaps are display-only and require complete selected data."),
     "submit_stage_assessment": (StageAssessment, "Record an evidence-linked assessment and request validated stage completion. In reporting this records assessment without finishing; use finish_analysis last."),
     "request_revision": (RevisionArgs, "Create a justified new attempt of the current or an earlier stage. Preserve historical evidence and invalidate affected downstream results."),
     "validate_workflow": (InspectArgs, "Check objective-specific completion and current dependencies before final reporting."),
-    "finish_analysis": (FinishArgs, "Validate and render the final report, close the reporting stage, and finish. Requires the preceding stages, with justified scope-dependent omissions. No PCA is required."),
+    "finish_analysis": (FinishArgs, "Validate and render the final report, close the reporting stage, and finish. Requires the preceding stages, with justified scope-dependent omissions. PCA requirements follow the registered scope."),
     "inspect_dataset": TOOL_DEFINITIONS["inspect_dataset"],
     "summarize_dataset": (SummaryArgs, "Save group-wise or overall descriptive statistics and undefined-reason tables for raw/original or current prepared concentrations/testing. Choose observed_only or including_imputed explicitly; no sample tables are returned."),
     "read_result": TOOL_DEFINITIONS["read_result"],
@@ -70,16 +75,23 @@ class ToolRegistry:
     def __init__(self, state: RunState):
         self.state = state
 
-    def schemas(self, stage=None):
+    def schemas(self, stage=None, analysis_block=None):
         if self.state is None or self.state.workflow:
             stage = self.state.workflow.stage if self.state else stage or STAGES[0]
             allowed = self.state.workflow.allowed_tools() if self.state else COMMON_TOOLS | STAGE_TOOLS[stage]
+            if self.state is None and analysis_block == "pca":
+                if stage != STAGES[2]:
+                    raise ValueError("PCA schemas belong to the statistical stage.")
+                allowed = COMMON_TOOLS | PCA_TOOLS
             schemas = []
             for name, (model, description) in STAGED_DEFINITIONS.items():
                 if name not in allowed:
                     continue
                 if name == "set_univariate_plan" and self.state and not self.state.run_info.get("univariate_version"):
                     model = UnivariatePlan
+                if self.state and self.state.run_info.get("visualization_version") == 1:
+                    model = {"make_plot": FigureSpecV1, "set_figure_plan": FigurePlanV1,
+                             "set_workflow_plan": WorkflowPlanV1}.get(name, model)
                 if self.state and not self.state.run_info.get("visualization_version"):
                     model = {"make_plot": FigureSpec, "set_figure_plan": FigurePlan,
                              "set_workflow_plan": WorkflowPlan}.get(name, model)
@@ -191,6 +203,9 @@ class ToolRegistry:
             model = STAGED_DEFINITIONS[name][0]
             if name == "set_univariate_plan" and not state.run_info.get("univariate_version"):
                 model = UnivariatePlan
+            if state.run_info.get("visualization_version") == 1:
+                model = {"make_plot": FigureSpecV1, "set_figure_plan": FigurePlanV1,
+                         "set_workflow_plan": WorkflowPlanV1}.get(name, model)
             if not state.run_info.get("visualization_version"):
                 model = {"make_plot": FigureSpec, "set_figure_plan": FigurePlan,
                          "set_workflow_plan": WorkflowPlan}.get(name, model)
@@ -225,6 +240,22 @@ class ToolRegistry:
                     result = analysis.preprocess(state, parsed.plan_id)
                     workflow.data.dataset_id = result["dataset_id"]
                     workflow.data.preparation_summary = result
+                elif name == "inspect_pca_inputs":
+                    from .pca import inspect_pca_inputs
+                    if parsed.dataset_id != workflow.data.dataset_id or workflow.data.pca_plan_id:
+                        raise ValueError("Inspect the current dataset before registering a PCA plan.")
+                    result = inspect_pca_inputs(state, parsed)
+                    workflow.data.pca_diagnostic_id = result["diagnostic_id"]
+                elif name == "set_pca_plan":
+                    result = workflow.set_pca_plan(parsed)
+                elif name == "run_pca":
+                    from .pca import run_pca
+                    if parsed.plan_id != workflow.data.pca_plan_id or parsed.dataset_id != workflow.data.dataset_id:
+                        raise ValueError("Use the current PCA plan and dataset.")
+                    result = run_pca(state, parsed.dataset_id, parsed.plan_id)
+                    workflow.data.pca_ids.append(result["pca_id"])
+                elif name == "skip_pca":
+                    result = workflow.skip_pca(parsed.rationale)
                 elif name == "set_univariate_plan":
                     result = workflow.set_univariate_plan(parsed)
                 elif name == "inspect_univariate":
@@ -250,7 +281,7 @@ class ToolRegistry:
                             raise ValueError("Register this figure in the current figure plan first.")
                     result = make_plot(state, parsed)
                     if workflow.stage == STAGES[3]:
-                        workflow.data.figure_ids.append(result["artifact_id"])
+                        workflow.data.figure_ids.extend(result.get("artifact_ids", [result["artifact_id"]] if result.get("artifact_id") else []))
                     elif state.run_info.get("visualization_version"):
                         workflow.data.diagnostic_figure_ids.append(result["artifact_id"])
                 elif name == "read_result":

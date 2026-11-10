@@ -5,16 +5,18 @@ pendiente. Los detalles están en [delivery-B.md](delivery-B.md) y
 [delivery-C.md](delivery-C.md), [delivery-D.md](delivery-D.md) y
 [delivery-E.md](delivery-E.md) y [delivery-F.md](delivery-F.md). Los prompts de `prompts/` son los textos aprobados;
 C instala sus copias en el paquete y activa las instrucciones por etapa. La
-evaluación y refinamiento previstos en G siguen pendientes.
+evaluación y refinamiento previstos en G siguen pendientes. La ampliación
+posterior de heatmaps y PCA se describe en [pca-heatmap-extension.md](pca-heatmap-extension.md).
 
 ## 1. Alcance y decisiones
 
 El flujo tendrá cinco etapas: coordinación, preparación y exploración,
 análisis univariante, visualización e interpretación e informe. Se elimina
-la etapa multivariante de la propuesta anterior, sin crear una etapa artificial
-para mantener la numeración de seis.
+la etapa multivariante independiente de la propuesta anterior. La ampliación
+posterior añade un bloque PCA opcional dentro de la tercera etapa, conservando
+las cinco etapas y los identificadores de las ejecuciones anteriores.
 
-Fuera del alcance: PCA, PLS/OPLS, t-SNE, UMAP, clustering, análisis de
+Fuera del alcance: PLS/OPLS, t-SNE, UMAP, clustering, análisis de
 correlaciones/covarianzas entre variables, redes lipídicas, corrección de lotes
 y procedimientos basados en QC, incluidos LOESS y SERRF. No se ampliará ninguno
 de esos métodos en esta implementación. Los metadatos de lote podrán describirse
@@ -26,8 +28,8 @@ no de copias de los esquemas en los prompts. Los prompts sí explican cuándo y
 cómo usar las herramientas. Los permisos se aplican también al ejecutar llamadas.
 
 Primera versión: comparación entre dos grupos, independiente o pareada, con los
-métodos ya implementados; descriptivos ampliados, visualizaciones sin PCA ni
-clustering y persistencia por etapa. ANOVA, Kruskal–Wallis y post hoc quedan como
+métodos ya implementados; descriptivos ampliados, visualizaciones sin clustering
+y persistencia por etapa. PCA exploratorio está disponible cuando se solicita. ANOVA, Kruskal–Wallis y post hoc quedan como
 ampliaciones univariantes posteriores, no como herramientas ya disponibles.
 
 ## 2. Estructura y responsabilidades
@@ -36,7 +38,7 @@ ampliaciones univariantes posteriores, no como herramientas ya disponibles.
 |---|---|---|---|
 | 01 Coordinación | [01_coordination.md](prompts/01_coordination.md) | Petición, diseño declarado, capacidades y resumen de carga | Objetivo, alcance, ruta provisional y requisitos de finalización |
 | 02 Preparación y exploración | [02_preparation.md](prompts/02_preparation.md) | Entradas originales, metadatos y plan de flujo | Diagnósticos, descriptivos, decisiones y representaciones preparadas |
-| 03 Análisis univariante | [03_univariate.md](prompts/03_univariate.md) | Datos preparados, diseño e incidencias relevantes | Plan estadístico congelado, pruebas, efectos, intervalos y correcciones |
+| 03 Análisis estadístico | [03_pca.md](prompts/03_pca.md) opcional y [03_univariate.md](prompts/03_univariate.md) | Datos preparados, diseño e incidencias relevantes | Plan estadístico congelado, pruebas, efectos, intervalos y correcciones |
 | 04 Visualización | [04_visualization.md](prompts/04_visualization.md) | Artefactos autorizados y resultados | Figuras, datos representados, selección de variables y pies |
 | 05 Interpretación e informe | [05_reporting.md](prompts/05_reporting.md) | Informes de todas las etapas y evidencias vigentes | Informe final, cobertura del objetivo y limitaciones acumuladas |
 
@@ -218,14 +220,16 @@ después de observar resultados siguen siendo exploratorias.
 
 Las siguientes herramientas existen hoy, aunque algunas necesitarán adaptación:
 `inspect_dataset`, `set_plan`, `preprocess`, `compare_groups`, `make_plot`,
-`read_result` y `finish_analysis`. `run_pca` existe, pero no se expondrá ni se
-ejecutará en el nuevo flujo. Tampoco se generará la representación PCA por defecto.
+`read_result` y `finish_analysis`. La ampliación añade `inspect_pca_inputs`,
+`set_pca_plan`, `run_pca` y `skip_pca` exclusivamente en el bloque PCA solicitado.
+No se genera una representación PCA por defecto ni se reutiliza la del protocolo histórico.
 
 | Etapa | Herramientas científicas actuales reutilizadas | Herramientas propuestas nuevas |
 |---|---|---|
 | Coordinación | `read_result` cuando haya evidencias | `get_workflow_state`, `set_workflow_plan` |
 | Preparación | `inspect_dataset`, `preprocess`, `read_result`, `make_plot` restringido a diagnóstico | `set_preprocessing_plan`, `summarize_dataset` |
 | Univariante | `compare_groups`, `read_result` | `inspect_univariate`, `set_univariate_plan` |
+| Bloque PCA opcional de etapa 03 | `read_result` agregado | `inspect_pca_inputs`, `set_pca_plan`, `run_pca`, `skip_pca` |
 | Visualización | `make_plot`, `read_result` | `set_figure_plan` |
 | Informe | `read_result`, `finish_analysis` adaptado | `validate_workflow` |
 
@@ -281,8 +285,8 @@ Se conservarán las evidencias de ejecuciones antiguas. Se versionará el esquem
 de estado: una ejecución antigua no pasará silenciosamente al nuevo protocolo.
 Se permitirá inspección de artefactos antiguos; la reanudación usará el protocolo
 y prompts originales cuando sea compatible, o se rechazará con motivo concreto.
-No se borrará el código PCA solo para reorganizar el flujo; quedará fuera del
-catálogo nuevo y de sus requisitos, pruebas y demo operativa.
+El código PCA histórico se conserva para sus ejecuciones. El bloque PCA nuevo
+utiliza contratos, persistencia y requisitos propios; su activación es explícita.
 
 ## 8. Secuencia de implementación
 
@@ -314,7 +318,8 @@ catálogo nuevo y de sus requisitos, pruebas y demo operativa.
   un cambio de versión explícito y no altera el intento previo.
 - Cada etapa cerrada tiene informe, manifiesto y traspaso, incluso si no transformó
   datos; un salto tiene motivo y dependencias validadas.
-- El nuevo catálogo y la demo no llaman a PCA ni exigen resultados multivariantes.
+- PCA solo se ofrece en su bloque solicitado y exige plan y evaluación propios.
+  Los objetivos sin PCA y las ejecuciones anteriores conservan sus requisitos.
 - No se confunden pruebas offline del funcionamiento con evaluación de decisiones
   de un LLM real. Solo esta última requiere proveedor/modelo y credenciales.
 

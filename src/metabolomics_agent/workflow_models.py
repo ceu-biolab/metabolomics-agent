@@ -149,6 +149,8 @@ class StageHandoff(Model):
     descriptive_summaries: list[dict[str, Any]] = Field(default_factory=list)
     univariate_results: list[dict[str, Any]] = Field(default_factory=list)
     figures: list[dict[str, Any]] = Field(default_factory=list)
+    pca_results: list[dict[str, Any]] = Field(default_factory=list)
+    plot_results: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class WorkflowState(Model):
@@ -166,6 +168,12 @@ class WorkflowState(Model):
     univariate_diagnostic_id: str | None = None
     univariate_attempt_ids: list[str] = Field(default_factory=list)
     comparison_ids: list[str] = Field(default_factory=list)
+    pca_plan_id: str | None = None
+    pca_diagnostic_id: str | None = None
+    pca_ids: list[str] = Field(default_factory=list)
+    pca_reviewed: bool = False
+    pca_skip: dict[str, Any] = Field(default_factory=dict)
+    plot_result_ids: list[str] = Field(default_factory=list)
     figure_plan_id: str | None = None
     figure_ids: list[str] = Field(default_factory=list)
     completed_reports: dict[str, str] = Field(default_factory=dict)
@@ -173,3 +181,80 @@ class WorkflowState(Model):
     current_attempt: str | None = None
     preparation_summary: dict[str, Any] = Field(default_factory=dict)
     revisions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class WorkflowPlanV2(WorkflowPlanV1):
+    pca_requirement: Literal["disabled", "optional", "required"] = "disabled"
+    required_figures: list[Literal["distributions", "boxplot", "volcano", "heatmap", "pca_scores", "pca_scree", "pca_loadings"]] = Field(
+        default_factory=lambda: ["distributions", "volcano"])
+
+    @model_validator(mode="after")
+    def check_pca_requirement(self):
+        if any(kind.startswith("pca_") for kind in self.required_figures) and self.pca_requirement != "required":
+            raise ValueError("Required PCA figures require pca_requirement=required.")
+        return self
+
+
+class PCAInputArgs(Model):
+    dataset_id: str
+    scale: Literal["concentrations", "testing"] = "testing"
+    features: list[str] = Field(default_factory=list, max_length=2000)
+
+    @model_validator(mode="after")
+    def check_features(self):
+        if len(self.features) != len(set(self.features)):
+            raise ValueError("PCA features must be unique.")
+        return self
+
+
+class PCAPlan(PCAInputArgs):
+    diagnostic_id: str
+    rationale: str = Field(min_length=15, max_length=4000)
+    components: int = Field(default=2, ge=2, le=1000)
+    centering: Literal["feature_mean"] = "feature_mean"
+    scaling: Literal["none", "auto", "pareto"] = "auto"
+    scaling_ddof: Literal[0, 1] = 0
+    svd_solver: Literal["full"] = "full"
+    whiten: Literal[False] = False
+    purpose: Literal["exploratory"] = "exploratory"
+
+
+class SkipPCAArgs(Model):
+    rationale: str = Field(min_length=15, max_length=4000)
+
+
+class FigureSpecV2(FigureSpecV1):
+    selection_rationale: str = Field(default="Declared feature selection is recorded with its source and criterion.", min_length=15, max_length=2000)
+    kind: Literal["distributions", "boxplot", "volcano", "heatmap", "pca_scores", "pca_scree", "pca_loadings"]
+    features: list[str] = Field(default_factory=list, max_length=2000)
+    selection_mode: Literal["explicit", "significant"] = "explicit"
+    comparison_id: str | None = None
+    rows_per_page: int = Field(default=40, ge=1, le=100)
+    components: list[int] = Field(default_factory=lambda: [1, 2], min_length=2, max_length=2)
+    component: int = Field(default=1, ge=1)
+    max_loading_features: int = Field(default=12, ge=1, le=40)
+
+    @model_validator(mode="after")
+    def check_display(self):
+        if len(self.features) != len(set(self.features)):
+            raise ValueError("Figure features must be unique.")
+        if self.kind != "heatmap" and (self.centering != "none" or self.scaling != "none"):
+            raise ValueError("Display centering/scaling is only available for heatmaps.")
+        if self.kind != "heatmap" and len(self.features) > 12:
+            raise ValueError("Only heatmaps support more than 12 explicit features.")
+        if self.kind == "volcano" and self.scale != "concentrations":
+            raise ValueError("Volcano fold changes use concentration-scale means.")
+        if self.selection_mode == "significant":
+            if self.kind != "heatmap" or self.features or not self.comparison_id:
+                raise ValueError("Significance selection requires a heatmap, comparison_id and no explicit features.")
+        elif self.comparison_id is not None:
+            raise ValueError("comparison_id is only used with significant selection.")
+        elif self.kind == "heatmap" and not self.features:
+            raise ValueError("Explicit heatmaps require features.")
+        if any(value < 1 for value in self.components) or len(set(self.components)) != 2:
+            raise ValueError("PCA score axes must be two distinct positive component numbers.")
+        return self
+
+
+class FigurePlanV2(FigurePlan):
+    figures: list[FigureSpecV2] = Field(default_factory=list, max_length=12)
