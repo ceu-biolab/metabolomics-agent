@@ -138,6 +138,7 @@ def preprocess(state: RunState, plan_id: str):
         if x.empty:
             raise ValueError("No features remain after missingness and constant-feature filtering.")
     missing_count = int(x.isna().sum().sum())
+    imputation_mask = pd.DataFrame(False, index=x.index, columns=x.columns)
     if missing_count and plan.imputation != "none":
         with evidence.operation("impute", parameters={"method": plan.imputation},
                                 inputs=[last] if last else []):
@@ -151,7 +152,8 @@ def preprocess(state: RunState, plan_id: str):
                 x = x.fillna(minimum)
             elif plan.imputation == "knn":
                 x[:] = KNNImputer(n_neighbors=min(5, len(x) - 1)).fit_transform(x)
-            checkpoint(missing_before & x.notna(), "imputation_mask", "boolean", advance=False)
+            imputation_mask = missing_before & x.notna()
+            checkpoint(imputation_mask, "imputation_mask", "boolean", advance=False)
             checkpoint(x, "imputed")
             notes.append("Imputed values are included in tests; inference may depend on imputation. "
                          "Consider an exploratory sensitivity analysis.")
@@ -190,6 +192,7 @@ def preprocess(state: RunState, plan_id: str):
         removed.extend({"feature": f, "reason": "constant_after_preprocessing"}
                        for f in testing.columns[~variable])
         x, testing = x.loc[:, variable], testing.loc[:, variable]
+        imputation_mask = imputation_mask.loc[:, variable]
     if testing.empty:
         raise ValueError("No variable features remain after preprocessing.")
     pca_values = None
@@ -212,8 +215,12 @@ def preprocess(state: RunState, plan_id: str):
         pd.DataFrame(removed, columns=["feature", "reason", "missing_fraction"]),
         "filtered_features", provenance,
     )
+    if state.run_info.get("descriptive_version") == 1:
+        artifacts["imputation_mask"] = state.table(
+            imputation_mask.reset_index(), "imputation_mask", {**provenance, "scale": "boolean"}
+        )
     # Publish an executable dataset only after all its tables have been committed.
-    state.datasets[did] = Dataset(x, testing, pca_values, plan_id, artifacts)
+    state.datasets[did] = Dataset(x, testing, pca_values, plan_id, artifacts, imputation_mask)
     evidence.check("PREPARED_DATASET", True, True, passed=True,
                    message="All representations of the prepared dataset must be saved.")
     return {"dataset_id": did, "plan_id": plan_id, "samples": len(x),

@@ -194,6 +194,8 @@ class DemoProvider(LegacyDemoProvider):
             raise ProviderError("Offline staged demo encountered a tool error; inspect stage reports.")
         values = [result["result"] for result in results]
         inspection = next((value for value in values if "missing_cells" in value), {})
+        context = json.loads(messages[-1].get("content") or "{}").get("stage_context", {})
+        descriptive = bool(context.get("descriptive_version"))
         figures = [
             {"kind": "distributions", "source_id": "d001"},
             {"kind": "volcano", "source_id": "c001"},
@@ -207,11 +209,16 @@ class DemoProvider(LegacyDemoProvider):
             }),
             ("submit_stage_assessment", {"summary": "The supported two-group objective and required figures are registered."}),
             ("inspect_dataset", {}),
+            *([("summarize_dataset", {"dataset_id": "raw", "scale": "original",
+                                       "value_policy": "observed_only"})] if descriptive else []),
             ("set_preprocessing_plan", {
                 "rationale": "Use log2 to reduce right skew and median imputation when observed missingness requires it.",
                 "imputation": "median" if inspection.get("missing_cells", 0) else "none", "transform": "log2",
             }),
             ("preprocess", {"plan_id": "pp001"}),
+            *([("summarize_dataset", {"dataset_id": "d001", "scale": scale,
+                                       "value_policy": "including_imputed"})
+               for scale in ["concentrations", "testing"]] if descriptive else []),
             ("submit_stage_assessment", {
                 "summary": "Preparation and its checkpoints are complete; imputation uncertainty remains a limitation.",
                 "limitations": ["Median imputation assumes that observed values are informative."],

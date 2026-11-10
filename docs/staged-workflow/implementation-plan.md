@@ -1,8 +1,8 @@
 # Plan actualizado: flujo por etapas con evidencias e informes
 
-Este documento describe el plan acordado. A, B y C están completadas; D–G siguen
+Este documento describe el plan acordado. A–D están completadas; E–G siguen
 pendientes. Los detalles están en [delivery-B.md](delivery-B.md) y
-[delivery-C.md](delivery-C.md). Los prompts de `prompts/` son los textos aprobados;
+[delivery-C.md](delivery-C.md) y [delivery-D.md](delivery-D.md). Los prompts de `prompts/` son los textos aprobados;
 C instala sus copias en el paquete y activa las instrucciones por etapa. La
 evaluación y refinamiento previstos en G siguen pendientes.
 
@@ -255,8 +255,8 @@ representación gráfica propia explícita; no depende de `pca_values`. Si una f
 no es aplicable al objetivo, su ausencia se justifica sin invalidar todo el flujo.
 
 Los prompts describen el contrato de destino. C implementa las herramientas de
-coordinación, planes y traspasos. Las ampliaciones científicas de D–F, incluida
-`summarize_dataset`, aún no están disponibles. El catálogo dinámico es la autoridad
+coordinación, planes y traspasos; D incorpora `summarize_dataset` y la procedencia
+observada/imputada. Las ampliaciones pendientes de E–F aún no están disponibles. El catálogo dinámico es la autoridad
 de capacidades en cada ejecución.
 
 ## 7. Cambios en el código
@@ -314,7 +314,7 @@ catálogo nuevo y de sus requisitos, pruebas y demo operativa.
 - No se confunden pruebas offline del funcionamiento con evaluación de decisiones
   de un LLM real. Solo esta última requiere proveedor/modelo y credenciales.
 
-El entorno y la referencia de A están preparados. La persistencia de B y la
-coordinación de C están implementadas y verificadas. Las cinco etapas y sus
-prompts están activos en nuevas ejecuciones; D–G conservan el trabajo pendiente
+El entorno y la referencia de A están preparados. La persistencia de B, la
+coordinación de C y los descriptivos de D están implementados y verificados. Las cinco etapas y sus
+prompts están activos en nuevas ejecuciones; E–G conservan el trabajo pendiente
 descrito anteriormente.

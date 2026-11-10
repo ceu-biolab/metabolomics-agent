@@ -6,6 +6,7 @@ from importlib.resources import files
 from pydantic import ValidationError
 
 from . import analysis
+from .descriptive import summarize_dataset
 from .models import (AnalysisPlan, DatasetArgs, FinishArgs, InspectArgs, PCAArgs,
                      PlotArgs, PrepareArgs, ReadResultArgs)
 from .plots import make_plot
@@ -15,7 +16,7 @@ from .state import RunState, clean_json
 from .workflow import COMMON_TOOLS, STAGES, STAGE_TOOLS
 from .workflow_models import (CompareArgs, FigurePlan, FigureSpec, PreprocessingPlan,
                               ReadStageArgs, RevisionArgs, StageAssessment,
-                              UnivariatePlan, WorkflowPlan)
+                              SummaryArgs, UnivariatePlan, WorkflowPlan)
 
 
 TOOL_DEFINITIONS = {
@@ -58,6 +59,7 @@ STAGED_DEFINITIONS = {
     "validate_workflow": (InspectArgs, "Check objective-specific completion and current dependencies before final reporting."),
     "finish_analysis": (FinishArgs, "Validate and render the final report, close the reporting stage, and finish. Requires the preceding stages, with justified scope-dependent omissions. No PCA is required."),
     "inspect_dataset": TOOL_DEFINITIONS["inspect_dataset"],
+    "summarize_dataset": (SummaryArgs, "Save group-wise or overall descriptive statistics and undefined-reason tables for raw/original or current prepared concentrations/testing. Choose observed_only or including_imputed explicitly; no sample tables are returned."),
     "read_result": TOOL_DEFINITIONS["read_result"],
 }
 
@@ -69,7 +71,7 @@ class ToolRegistry:
     def schemas(self, stage=None):
         if self.state is None or self.state.workflow:
             stage = self.state.workflow.stage if self.state else stage or STAGES[0]
-            allowed = COMMON_TOOLS | STAGE_TOOLS[stage]
+            allowed = self.state.workflow.allowed_tools() if self.state else COMMON_TOOLS | STAGE_TOOLS[stage]
             schemas = []
             for name, (model, description) in STAGED_DEFINITIONS.items():
                 if name not in allowed:
@@ -86,10 +88,9 @@ class ToolRegistry:
         }} for name, (model, description) in TOOL_DEFINITIONS.items()]
 
     def execute(self, name: str, arguments: str | dict):
-        """Record legacy tool attempts without changing routing or model context.
+        """Execute current-stage tools or the explicit legacy replay protocol.
 
-        Delivery C will group these persistence primitives into workflow stages.
-        Invalid calls also get a failed report, rather than losing their evidence.
+        Invalid calls are recorded locally rather than losing their evidence.
         """
         if self.state.workflow:
             return self._execute_staged(name, arguments)
@@ -198,6 +199,13 @@ class ToolRegistry:
                                                     if result.get(key)]
                 elif name == "set_preprocessing_plan":
                     result = workflow.set_preprocessing_plan(parsed)
+                elif name == "summarize_dataset":
+                    if parsed.dataset_id not in {"raw", workflow.data.dataset_id}:
+                        raise ValueError("Summaries require raw data or the current prepared dataset.")
+                    if not state.inspected or not workflow.data.diagnostic_ids:
+                        raise ValueError("Inspect the dataset before requesting descriptive summaries.")
+                    result = summarize_dataset(state, parsed)
+                    workflow.data.summary_ids.append(result["summary_id"])
                 elif name == "preprocess":
                     if parsed.plan_id != workflow.data.preprocessing_plan_id:
                         raise ValueError("Use the current preparation plan.")

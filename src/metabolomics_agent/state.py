@@ -22,6 +22,7 @@ class Dataset:
     pca_values: pd.DataFrame | None
     plan_id: str
     artifact_ids: dict[str, str] = field(default_factory=dict)
+    imputation_mask: pd.DataFrame | None = None
 
 
 class RunState:
@@ -42,6 +43,9 @@ class RunState:
         self.config = StudyConfig.model_validate(self.run_info["study"])
         self.seed = self.run_info["seed"]
         self.protocol = self.run_info.get("protocol", "legacy")
+        self.descriptive_summaries = saved.get("descriptive_summaries", {})
+        if self.run_info.get("descriptive_version", 0) not in {0, 1}:
+            raise ValueError("Unsupported descriptive workflow version.")
         if self.protocol not in {"legacy", "staged_v1"}:
             raise ValueError("Unsupported workflow protocol; cannot migrate a saved run implicitly.")
         if self.protocol == "staged_v1" and not saved.get("workflow"):
@@ -88,8 +92,14 @@ class RunState:
             load("testing_values", did, d.get("artifact_ids", {}).get("testing")),
             (load("pca_values", did, d.get("artifact_ids", {}).get("pca"))
              if self.protocol == "legacy" else None),
-            d["plan_id"], d.get("artifact_ids", {}))
+            d["plan_id"], d.get("artifact_ids", {}),
+            (load("imputation_mask", did, d["artifact_ids"]["imputation_mask"])
+             if d.get("artifact_ids", {}).get("imputation_mask") else None))
                          for did, d in saved["datasets"].items()}
+        if self.run_info.get("descriptive_version") == 1 and any(
+            dataset.imputation_mask is None for dataset in self.datasets.values()
+        ):
+            raise ValueError("A descriptive-enabled dataset is missing its saved imputation mask.")
         self.workflow = Workflow(self, saved["workflow"]) if self.protocol == "staged_v1" else None
         return self
 
@@ -105,6 +115,7 @@ class RunState:
         self.preprocessing_plans = {}
         self.univariate_plans = {}
         self.figure_plans = {}
+        self.descriptive_summaries = {}
         self.output_dir = output_dir.resolve()
         # A run directory is immutable across runs. Never overwrite prior evidence.
         self.output_dir.mkdir(parents=True, exist_ok=False)
@@ -120,6 +131,7 @@ class RunState:
         self.events = 0
         self.run_info = {
             "protocol": protocol,
+            "descriptive_version": 1 if protocol == "staged_v1" else 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "study": config.model_dump(), "seed": seed, "python": platform.python_version(),
             "inputs": [],
@@ -162,11 +174,12 @@ class RunState:
         parents = provenance.get("parent_ids", self.evidence.active.input_artifact_ids
                                  if self.evidence.active else [])
         individual = kind in {"input_values", "input_metadata", "concentrations", "testing_values",
-                              "pca_values", "pca_scores"}
+                              "pca_values", "pca_scores", "imputation_mask"}
         artifact = self.evidence.table(
             table, kind, aid=aid, relative=filename, parent_ids=parents,
             plan_id=provenance.get("plan_id"), dataset_id=provenance.get("dataset_id"),
             scale=provenance.get("scale"), individual_samples=individual,
+            parameters=provenance.get("parameters", {}),
         )
         self.artifacts[aid] = {**artifact.model_dump(), **provenance}
         return aid
@@ -217,6 +230,7 @@ class RunState:
             "preprocessing_plans": {key: value.model_dump() for key, value in self.preprocessing_plans.items()},
             "univariate_plans": {key: value.model_dump() for key, value in self.univariate_plans.items()},
             "figure_plans": {key: value.model_dump() for key, value in self.figure_plans.items()},
+            "descriptive_summaries": self.descriptive_summaries,
             "status": self.status, "finished": self.finished, "inspected": self.inspected,
             "plans": {k: v.model_dump() for k, v in self.plans.items()},
             "datasets": {k: {"plan_id": d.plan_id, "artifact_ids": d.artifact_ids,

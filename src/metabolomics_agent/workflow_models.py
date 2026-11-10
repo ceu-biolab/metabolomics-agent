@@ -62,6 +62,15 @@ class CompareArgs(Model):
     plan_id: str
 
 
+class SummaryArgs(Model):
+    dataset_id: str = "raw"
+    scale: Literal["original", "concentrations", "testing"] = "original"
+    grouping: Literal["group", "overall"] = "group"
+    value_policy: Literal["observed_only", "including_imputed"] = "observed_only"
+    features: list[str] = Field(default_factory=list, max_length=20)
+    include_mode: bool = False
+
+
 class StageAssessment(Model):
     summary: str = Field(min_length=5, max_length=4000)
     findings: list[Finding] = Field(default_factory=list, max_length=20)
@@ -97,6 +106,7 @@ class StageHandoff(Model):
     preparation: dict[str, Any]
     issues: list[StageIssue]
     limitations: list[str]
+    descriptive_summaries: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class WorkflowState(Model):
@@ -107,6 +117,7 @@ class WorkflowState(Model):
     plan_id: str | None = None
     preprocessing_plan_id: str | None = None
     diagnostic_ids: list[str] = Field(default_factory=list)
+    summary_ids: list[str] = Field(default_factory=list)
     dataset_id: str | None = None
     univariate_plan_id: str | None = None
     comparison_ids: list[str] = Field(default_factory=list)

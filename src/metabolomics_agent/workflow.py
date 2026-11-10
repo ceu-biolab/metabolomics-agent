@@ -13,7 +13,7 @@ COMMON_TOOLS = {"get_workflow_state", "get_stage_context", "read_stage_report", 
                 "submit_stage_assessment", "request_revision"}
 STAGE_TOOLS = {
     STAGES[0]: {"set_workflow_plan"},
-    STAGES[1]: {"inspect_dataset", "set_preprocessing_plan", "preprocess", "make_plot"},
+    STAGES[1]: {"inspect_dataset", "summarize_dataset", "set_preprocessing_plan", "preprocess", "make_plot"},
     STAGES[2]: {"set_univariate_plan", "compare_groups"},
     STAGES[3]: {"set_figure_plan", "make_plot"},
     STAGES[4]: {"validate_workflow", "finish_analysis"},
@@ -43,7 +43,10 @@ class Workflow:
         return self.data.active_stage
 
     def allowed_tools(self):
-        return COMMON_TOOLS | STAGE_TOOLS[self.stage]
+        allowed = COMMON_TOOLS | STAGE_TOOLS[self.stage]
+        if not self.state.run_info.get("descriptive_version"):
+            allowed = allowed - {"summarize_dataset"}
+        return allowed
 
     def prompt(self):
         return self.bundle["common"] + "\n\n" + self.bundle[self.stage] + "\n\n" + (
@@ -58,6 +61,10 @@ class Workflow:
         result = [aid for aid, artifact in self.state.artifacts.items()
                   if artifact["kind"] in {"input_values", "input_metadata"}]
         result.extend(self.data.diagnostic_ids)
+        for sid in self.data.summary_ids:
+            summary = self.state.descriptive_summaries[sid]
+            result.extend(summary["artifacts"].values())
+            result.append(summary["metadata_artifact_id"])
         if self.data.dataset_id:
             result.extend(self.state.datasets[self.data.dataset_id].artifact_ids.values())
         result.extend(self.state.comparisons[cid]["artifact_id"] for cid in self.data.comparison_ids)
@@ -66,6 +73,7 @@ class Workflow:
 
     def evidence_ids(self):
         ids = set(self.current_artifacts()) | set(self.data.comparison_ids)
+        ids.update(self.data.summary_ids)
         ids |= {value for value in self.plan_refs().values() if value}
         if self.data.dataset_id:
             ids.add(self.data.dataset_id)
@@ -76,6 +84,18 @@ class Workflow:
     def plan_refs(self):
         return {"workflow": self.data.plan_id, "preparation": self.data.preprocessing_plan_id,
                 "univariate": self.data.univariate_plan_id, "figures": self.data.figure_plan_id}
+
+    def summary_descriptors(self):
+        fields = {"summary_id", "dataset_id", "scale", "grouping", "value_policy", "include_mode",
+                  "all_features", "feature_count", "rows", "preprocessing_plan_id", "transform",
+                  "zero_as_missing", "artifacts", "undefined_counts", "metadata_artifact_id"}
+        return [{key: value for key, value in self.state.descriptive_summaries[sid].items()
+                 if key in fields} for sid in self.data.summary_ids]
+
+    def has_summary(self, dataset_id, scale, policy):
+        return any(summary["dataset_id"] == dataset_id and summary["scale"] == scale
+                   and summary["value_policy"] == policy and summary["grouping"] == "group"
+                   and summary["all_features"] for summary in self.summary_descriptors())
 
     def _reports(self):
         return [StageReport.model_validate_json(self.state.evidence.path(path).read_text())
@@ -136,6 +156,7 @@ class Workflow:
         result["issue_count"] = len(result["issues"])
         result["issues"] = result["issues"][:20]
         result["limitations"] = result["limitations"][:20]
+        result["descriptive_summaries"] = result["descriptive_summaries"][:20]
         return result
 
     def context(self):
@@ -144,6 +165,9 @@ class Workflow:
         univariate = (self.state.univariate_plans[self.data.univariate_plan_id].model_dump()
                       if self.data.univariate_plan_id else {})
         return {"protocol": "staged_v1", "stage": self.stage, "revision": self.data.revision,
+                "descriptive_version": self.state.run_info.get("descriptive_version", 0),
+                "descriptive_summaries": self.summary_descriptors()[:20],
+                "descriptive_summary_count": len(self.data.summary_ids),
                 "study": self.state.config.model_dump(exclude={"data_path", "metadata_path"}),
                 "objective": self.state.run_info.get("request", self.state.config.objective),
                 "workflow_plan": (self.state.workflow_plans[self.data.plan_id].model_dump()
@@ -193,6 +217,10 @@ class Workflow:
     def set_preprocessing_plan(self, plan):
         if not self.state.inspected or not self.data.diagnostic_ids:
             raise ValueError("Inspect the dataset before selecting preparation.")
+        if self.state.run_info.get("descriptive_version") and not self.has_summary(
+            "raw", "original", "observed_only"
+        ):
+            raise ValueError("Summarize all original features by group with observed_only before planning preparation.")
         if self.data.preprocessing_plan_id:
             raise ValueError("Request a preparation revision before replacing its plan.")
         self.data.preprocessing_plan_id = self._register_plan("pp", plan, self.state.preprocessing_plans)
@@ -251,6 +279,14 @@ class Workflow:
                 errors.append("Inspection and an executed current preparation plan are required.")
             elif self.state.datasets[data.dataset_id].plan_id != data.preprocessing_plan_id:
                 errors.append("The prepared dataset belongs to a superseded plan.")
+            if self.state.run_info.get("descriptive_version"):
+                for dataset_id, scale, policy in [
+                    ("raw", "original", "observed_only"),
+                    (data.dataset_id, "concentrations", "including_imputed"),
+                    (data.dataset_id, "testing", "including_imputed"),
+                ]:
+                    if not self.has_summary(dataset_id, scale, policy):
+                        errors.append(f"Missing full group-wise summary: {dataset_id}/{scale}/{policy}.")
         elif stage == STAGES[2]:
             if not data.univariate_plan_id or not data.comparison_ids:
                 errors.append("Execute the current univariate plan before advancing.")
@@ -305,6 +341,7 @@ class Workflow:
             comparison_ids=self.data.comparison_ids, figure_ids=self.data.figure_ids,
             artifact_ids=self.current_artifacts(), aggregates=self.aggregates(), preparation=preparation,
             issues=self.issues(), limitations=self.limitations(),
+            descriptive_summaries=self.summary_descriptors(),
         )
         relative = f"stages/{self.stage}/{report.attempt_id}/handoff.json"
         self.state.write_json(relative, handoff.model_dump())
@@ -374,6 +411,7 @@ class Workflow:
         if index <= 1:
             self.data.preprocessing_plan_id = None
             self.data.diagnostic_ids = []
+            self.data.summary_ids = []
             self.data.dataset_id = None
             self.data.preparation_summary = {}
         if index <= 2:

@@ -56,6 +56,19 @@ def finish_analysis(state: RunState, args: FinishArgs):
             lines.append(f"| {name} | {fc} | {row['p_value']:.4g} | {row['adjusted_p_value']:.4g} |")
         lines += ["", "Feature-wise confidence intervals are unadjusted. Statistical significance "
                   "does not by itself establish biological relevance.", ""]
+    if state.workflow and state.workflow.data.summary_ids:
+        lines += ["## Descriptive statistics", "",
+                  "Full tables identify group, scale, observed and imputed counts. Undefined "
+                  "statistics have missing values and explicit reasons in a separate table. "
+                  "CV is SD/mean (a ratio, not a percentage) and is not reported on log scales.", ""]
+        for sid in state.workflow.data.summary_ids:
+            summary = state.descriptive_summaries[sid]
+            table = state.artifacts[summary["artifacts"]["statistics"]]["path"]
+            reasons = state.artifacts[summary["artifacts"]["undefined_reasons"]]["path"]
+            lines += [f"- **{sid}**: {summary['dataset_id']}, {summary['scale']}, "
+                      f"{summary['grouping']}, {summary['value_policy']}. "
+                      f"[Statistics]({table}); [undefined reasons]({reasons}); "
+                      f"[methods and metadata]({sid}_summary.json)."]
     lines += ["## Analysis decisions", ""]
     plans = state.preprocessing_plans if state.workflow else state.plans
     for pid, plan in plans.items():

@@ -37,10 +37,14 @@ def coordinate(tools, *, descriptive=False, figures=None):
 
 def prepare_staged(tools, **options):
     call(tools, "inspect_dataset")
+    call(tools, "summarize_dataset", {"dataset_id": "raw", "scale": "original"})
     plan = call(tools, "set_preprocessing_plan", {
         "rationale": "Prespecified preparation appropriate for the quantified observations.", **options,
     })
     dataset = call(tools, "preprocess", {"plan_id": plan["plan_id"]})
+    for scale in ["concentrations", "testing"]:
+        call(tools, "summarize_dataset", {"dataset_id": dataset["dataset_id"], "scale": scale,
+                                         "value_policy": "including_imputed"})
     assess(tools)
     return dataset
 
@@ -207,7 +211,7 @@ def test_resume_restores_stage_and_does_not_repeat_preparation(tmp_path):
     config = StudyConfig.model_validate_json(study.read_text())
     state = RunState(config, study.parent, tmp_path / "run")
     provider = DemoProvider()
-    cfg = LLMConfig(model="offline", max_total_tokens=500000, max_turns=6)
+    cfg = LLMConfig(model="offline", max_total_tokens=500000, max_turns=9)
     first = Agent(state, provider, cfg).run(config.objective, progress=lambda _: None)
     assert first["status"] == "turn_limit"
     assert state.workflow.stage == STAGES[2]

@@ -7,7 +7,7 @@ and its [companion GitBook](https://laboratory-of-lipid-metabolism-a.gitbook.io/
 
 The current scope is **two-group analysis of already quantified concentration or
 intensity tables**. It includes independent and paired designs, missing-value
-handling, descriptive diagnostics, univariate tests, plots, and a Markdown report.
+handling, group-wise descriptive statistics, univariate tests, plots, and a Markdown report.
 New runs follow five validated stages: coordination, preparation, univariate
 analysis, visualization, and reporting. Multivariate analysis and batch/QC
 correction are excluded. It does not process raw MS files. No LLM API request is
@@ -51,7 +51,8 @@ committed checkpoints; reopening evidence marks unfinished attempts as interrupt
 Each completed stage also saves a validated `handoff.json` with aggregate context,
 current evidence IDs, decisions, and relevant issues for the next stage. English
 stage prompts and tool permissions are active; full individual sample tables stay
-local. See [delivery C](docs/staged-workflow/delivery-C.md) for scope and validation.
+local. See [delivery D](docs/staged-workflow/delivery-D.md) for the current
+descriptive capabilities and verification results.
 
 The command prints its output directory. Open `report.md` there; it links to the
 numerical tables and embeds PNG figures. An existing run directory is never
@@ -186,6 +187,7 @@ are counted and recorded as excluded. The direction of all signed effects is
 |---|---|
 | `set_workflow_plan` | Objective, descriptive/two-group scope, and figure requirements |
 | `inspect_dataset` | Missingness, zeros, distributions, normality diagnostics, outliers, batch/group counts |
+| `summarize_dataset` | Group-wise or overall statistics on original/concentration/test scales, observed/imputed counts, quantiles, shape, CV, optional mode, and explicit undefined reasons |
 | `set_preprocessing_plan` | Preparation choices after inspection, independent of the statistical plan |
 | `preprocess` | Missingness/constant filtering; none/median/half-minimum/kNN imputation; optional median normalization; optional log2/log10 transformation |
 | `set_univariate_plan` | Statistical test, correction, and purpose for the current dataset |
@@ -224,8 +226,23 @@ Two analysis representations are saved, in addition to operation checkpoints:
    for group summaries and log2 ratios of arithmetic means.
 2. Optionally transformed, unscaled values for statistical tests.
 
-PCA representations are not computed for new runs. Heatmaps and the expanded
-descriptive summaries remain pending in subsequent implementation deliveries.
+An aligned boolean imputation mask is also saved for each newly prepared dataset.
+PCA representations are not computed. Heatmaps remain pending in delivery F.
+
+Preparation requires full group-wise summaries of raw/original observations and
+both prepared scales (including imputed cells). Additional `observed_only` summaries
+can exclude imputed cells without recomputing normalization. Each summary saves
+statistics, a separate undefined-reasons table, and `sNNN_summary.json` with methods.
+Sample variance/SD use ddof=1; quantiles use linear interpolation; kurtosis is
+bias-corrected Fisher excess. CV is SD/mean, not a percentage, and is not reported
+on logarithmic scales. Optional exact-value mode reports ambiguity rather than
+arbitrarily choosing one of tied modes.
+
+Counts distinguish input observations, original missing values, zeros, source
+missingness, imputed values, used observations, and excluded imputations. For
+prepared data, zeros explicitly reclassified as missing count as missing inputs;
+the original summary preserves them as measured values. Full sample tables and
+masks cannot be read by the model through `read_result`.
 
 Tests are two-sided. Welch/pooled t analyses include signed Hedges' g and
 feature-wise confidence intervals for mean differences on the test scale.
@@ -316,6 +333,7 @@ src/metabolomics_agent/
   benchmark.py      selected exact GitBook reference checks
   workflow.py       stage contracts, transitions, revisions, and handoffs
   workflow_models.py independent workflow/preparation/statistical/figure plans
+  descriptive.py    statistics by group/scale with observed/imputed provenance
   prompts/stages/   shared and stage-specific English instructions
   prompts/system.md legacy scientific behavior and tool-use guidance
 ```
