@@ -12,7 +12,8 @@ from .evidence import EvidenceStore, digest
 from .models import AnalysisPlan, StudyConfig
 from .serialization import clean_json as clean_json, dumps as dumps
 from .workflow import Workflow
-from .workflow_models import FigurePlan, PreprocessingPlan, UnivariatePlan, UnivariatePlanV1, WorkflowPlan
+from .workflow_models import (FigurePlan, FigurePlanV1, PreprocessingPlan, UnivariatePlan,
+                              UnivariatePlanV1, WorkflowPlan, WorkflowPlanV1)
 
 
 @dataclass
@@ -50,6 +51,8 @@ class RunState:
             raise ValueError("Unsupported descriptive workflow version.")
         if self.run_info.get("univariate_version", 0) not in {0, 1}:
             raise ValueError("Unsupported univariate workflow version.")
+        if self.run_info.get("visualization_version", 0) not in {0, 1}:
+            raise ValueError("Unsupported visualization workflow version.")
         if self.run_info.get("univariate_version") and not self.run_info.get("descriptive_version"):
             raise ValueError("Audited inference requires saved observed/imputed provenance.")
         if self.protocol not in {"legacy", "staged_v1"}:
@@ -57,9 +60,9 @@ class RunState:
         if self.protocol == "staged_v1" and not saved.get("workflow"):
             raise ValueError("Missing staged workflow state.")
         self.plans = {pid: AnalysisPlan.model_validate(p) for pid, p in saved["plans"].items()}
-        for attribute, model in [("workflow_plans", WorkflowPlan), ("preprocessing_plans", PreprocessingPlan),
+        for attribute, model in [("workflow_plans", WorkflowPlanV1 if self.run_info.get("visualization_version") else WorkflowPlan), ("preprocessing_plans", PreprocessingPlan),
                                  ("univariate_plans", UnivariatePlanV1 if self.run_info.get("univariate_version") else UnivariatePlan),
-                                 ("figure_plans", FigurePlan)]:
+                                 ("figure_plans", FigurePlanV1 if self.run_info.get("visualization_version") else FigurePlan)]:
             setattr(self, attribute, {pid: model.model_validate(plan)
                                      for pid, plan in saved.get(attribute, {}).items()})
         self.artifacts = saved["artifacts"]
@@ -142,6 +145,7 @@ class RunState:
             "protocol": protocol,
             "descriptive_version": 1 if protocol == "staged_v1" else 0,
             "univariate_version": 1 if protocol == "staged_v1" else 0,
+            "visualization_version": 1 if protocol == "staged_v1" else 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "study": config.model_dump(), "seed": seed, "python": platform.python_version(),
             "inputs": [],
@@ -184,7 +188,7 @@ class RunState:
         parents = provenance.get("parent_ids", self.evidence.active.input_artifact_ids
                                  if self.evidence.active else [])
         individual = kind in {"input_values", "input_metadata", "concentrations", "testing_values",
-                              "pca_values", "pca_scores", "imputation_mask"}
+                              "pca_values", "pca_scores", "imputation_mask", "plot_source", "plot_data"}
         artifact = self.evidence.table(
             table, kind, aid=aid, relative=filename, parent_ids=parents,
             plan_id=provenance.get("plan_id"), dataset_id=provenance.get("dataset_id"),
@@ -200,7 +204,8 @@ class RunState:
         self.evidence.atomic_write(filename, lambda path: figure.savefig(
             path, format="png", dpi=160, bbox_inches="tight"
         ))
-        parents = self.evidence.active.input_artifact_ids if self.evidence.active else []
+        parents = provenance.get("parent_ids", self.evidence.active.input_artifact_ids
+                                 if self.evidence.active else [])
         artifact = self.evidence.register_file(filename, kind, aid=aid, parent_ids=parents,
                                               parameters=provenance)
         self.artifacts[aid] = {**artifact.model_dump(), **provenance}

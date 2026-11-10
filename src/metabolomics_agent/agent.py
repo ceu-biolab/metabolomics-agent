@@ -187,7 +187,10 @@ class Agent:
             state.write_json("run.json", state.run_info)
             state.write_json("conversation.json", self.messages)
             state.snapshot()
-            if not state.finished:
+            if not state.finished and state.workflow and state.run_info.get("visualization_version"):
+                from .report import write_partial_report
+                write_partial_report(state)
+            elif not state.finished:
                 content = self.messages[-1].get("content") if self.messages else None
                 (state.output_dir / "incomplete.md").write_text(
                     f"# Analysis did not finish\n\nStatus: {state.status}.\n\n"

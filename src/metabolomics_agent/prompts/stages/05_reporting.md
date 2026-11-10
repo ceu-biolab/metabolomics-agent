@@ -65,3 +65,30 @@ workflow can be complete without tests, volcano plots, or multivariate results.
 This stage normally creates report artifacts rather than transformed scientific
 data. State that distinction. The runtime persists the stage report and closure
 record, and determines whether final workflow completion is permitted.
+
+## Version 1 figure and reporting evidence
+
+For runs with `visualization_version=1`, review the `figures` descriptors in the
+context and visualization handoff. Each successful figure includes references to
+source/display tables and its configuration, selected scale, centering/scaling,
+ordering, caption, omission counts, zero-p display clipping, and complete-pair line
+counts. These are local reproduction artifacts; do not request or quote individual
+sample rows or sample-order identifiers. Cite the current figure and numerical
+result IDs in interpretations. Explain that heatmap scaling is display-only and
+that a heatmap without clustering cannot establish clusters or predictive ability.
+
+The renderer records the registered objective, scope, preceding stage statuses,
+current plans and data representations, current figures and their source links,
+open inherited issue codes, and recorded unchecked assumptions. In descriptive
+workflows it explicitly explains why group-comparison tests and volcano plots
+were omitted; no multivariate result is required. In two-group workflows use the
+saved effects and unadjusted confidence intervals as well as corrected p-values.
+Do not interpret a valid nonsignificant test as proof that the groups are equivalent.
+
+Use finish_analysis only after validate_workflow confirms that the required
+current evidence is complete. A rejected figure, partial raw test checkpoint, or
+failed attempt must not be called a completed result. If work stops, the runtime
+retains an explicitly incomplete report with links to stage outcomes and partial
+evidence. Subsequent revisions retain historical files; distinguish those from
+the current evidence selected for final reporting. Report limitations even when
+completion is valid, and preserve uncertainty that was not resolved by a check.

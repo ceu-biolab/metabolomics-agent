@@ -197,11 +197,18 @@ class DemoProvider(LegacyDemoProvider):
         context = json.loads(messages[-1].get("content") or "{}").get("stage_context", {})
         descriptive = bool(context.get("descriptive_version"))
         audited_univariate = bool(context.get("univariate_version"))
+        audited_figures = bool(context.get("visualization_version"))
         figures = [
             {"kind": "distributions", "source_id": "d001"},
             {"kind": "volcano", "source_id": "c001"},
             {"kind": "boxplot", "source_id": "d001", "features": ["lipid_01", "lipid_02"]},
         ]
+        if audited_figures:
+            figures[0]["scale"] = "testing"
+            figures.append({"kind": "heatmap", "source_id": "d001", "scale": "testing",
+                            "features": ["lipid_01", "lipid_02", "lipid_03"],
+                            "centering": "feature_mean", "scaling": "feature_sd",
+                            "selection_rationale": "Show the first three declared features in source order without significance selection or clustering."})
         steps = [
             ("set_workflow_plan", {
                 "objective": "Compare the synthetic condition and control groups with an auditable univariate analysis.",

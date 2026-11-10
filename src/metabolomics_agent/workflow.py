@@ -78,7 +78,11 @@ class Workflow:
         if self.data.dataset_id:
             result.extend(self.state.datasets[self.data.dataset_id].artifact_ids.values())
         result.extend(self.state.comparisons[cid]["artifact_id"] for cid in self.data.comparison_ids)
+        result.extend(self.data.diagnostic_figure_ids)
         result.extend(self.data.figure_ids)
+        for aid in [*self.data.diagnostic_figure_ids, *self.data.figure_ids]:
+            figure = self.state.artifacts[aid]
+            result.extend(figure.get("plot_artifact_ids", {}).values())
         return list(dict.fromkeys(result))
 
     def evidence_ids(self):
@@ -116,6 +120,14 @@ class Workflow:
                 "features_with_raw_p", "correction_completed", "issue_counts", "metadata_artifact_id"}
         return [{key: value for key, value in self.state.univariate_attempts[uid].items() if key in keys}
                 for uid in self.data.univariate_attempt_ids]
+
+    def figure_descriptors(self):
+        keys = {"kind", "source_id", "features", "scale", "centering", "scaling",
+                "sample_order", "selection_rationale", "caption", "plot_artifact_ids",
+                "omitted_values", "clipped_zero_p", "paired_lines", "display_notes",
+                "selected_features", "imputed_values", "labels", "group_order"}
+        return [{"artifact_id": aid, **{key: value for key, value in self.state.artifacts[aid].items()
+                                       if key in keys}} for aid in [*self.data.diagnostic_figure_ids, *self.data.figure_ids]]
 
     def _reports(self):
         return [StageReport.model_validate_json(self.state.evidence.path(path).read_text())
@@ -178,6 +190,7 @@ class Workflow:
         result["limitations"] = result["limitations"][:20]
         result["descriptive_summaries"] = result["descriptive_summaries"][:20]
         result["univariate_results"] = result["univariate_results"][:20]
+        result["figures"] = result["figures"][:12]
         return result
 
     def context(self):
@@ -188,6 +201,9 @@ class Workflow:
         return {"protocol": "staged_v1", "stage": self.stage, "revision": self.data.revision,
                 "descriptive_version": self.state.run_info.get("descriptive_version", 0),
                 "univariate_version": self.state.run_info.get("univariate_version", 0),
+                "visualization_version": self.state.run_info.get("visualization_version", 0),
+                "figures": self.figure_descriptors()[:20],
+                "figure_count": len(self.data.figure_ids) + len(self.data.diagnostic_figure_ids),
                 "univariate_diagnostic_id": self.data.univariate_diagnostic_id,
                 "univariate_results": self.univariate_descriptors()[:20],
                 "descriptive_summaries": self.summary_descriptors()[:20],
@@ -281,10 +297,13 @@ class Workflow:
         return {"plan_id": self.data.figure_plan_id, "plan": plan.model_dump()}
 
     def validate_figure(self, args):
-        if args.kind not in {"distributions", "boxplot", "volcano"}:
-            raise ValueError("This workflow excludes multivariate figures; heatmaps await delivery F.")
+        kinds = {"distributions", "boxplot", "volcano"}
+        if self.state.run_info.get("visualization_version"):
+            kinds.add("heatmap")
+        if args.kind not in kinds:
+            raise ValueError("Unsupported figure for this workflow version.")
         if self.stage == STAGES[1]:
-            if args.kind == "volcano" or args.source_id not in {"raw", self.data.dataset_id}:
+            if args.kind not in {"distributions", "boxplot"} or args.source_id not in {"raw", self.data.dataset_id}:
                 raise ValueError("Preparation permits only diagnostic distributions and boxplots.")
         elif args.kind == "volcano":
             if args.source_id not in self.data.comparison_ids:
@@ -337,6 +356,8 @@ class Workflow:
                     if not any(self.state.artifacts[aid]["kind"] == figure.kind
                                and self.state.artifacts[aid].get("source_id") == figure.source_id
                                and self.state.artifacts[aid].get("features", []) == figure.features
+                               and (not self.state.run_info.get("visualization_version")
+                                    or self.state.artifacts[aid].get("figure_spec") == figure.model_dump())
                                for aid in data.figure_ids):
                         errors.append(f"Missing planned figure: {figure.kind} / {figure.source_id}.")
         else:
@@ -378,6 +399,7 @@ class Workflow:
             issues=self.issues(), limitations=self.limitations(),
             descriptive_summaries=self.summary_descriptors(),
             univariate_results=self.univariate_descriptors(),
+            figures=self.figure_descriptors(),
         )
         relative = f"stages/{self.stage}/{report.attempt_id}/handoff.json"
         self.state.write_json(relative, handoff.model_dump())
@@ -447,6 +469,7 @@ class Workflow:
         if index <= 1:
             self.data.preprocessing_plan_id = None
             self.data.diagnostic_ids = []
+            self.data.diagnostic_figure_ids = []
             self.data.summary_ids = []
             self.data.dataset_id = None
             self.data.preparation_summary = {}

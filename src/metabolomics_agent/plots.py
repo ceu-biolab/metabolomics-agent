@@ -22,6 +22,9 @@ def _features(columns, requested, limit=6):
 
 
 def make_plot(state: RunState, args: PlotArgs):
+    if state.workflow and state.run_info.get("visualization_version"):
+        from .visualization import make_audited_plot
+        return make_audited_plot(state, args)
     sns.set_theme(style="whitegrid", context="notebook")
     source, kind, cfg = args.source_id, args.kind, state.config
     fig = None

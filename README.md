@@ -51,9 +51,10 @@ committed checkpoints; reopening evidence marks unfinished attempts as interrupt
 Each completed stage also saves a validated `handoff.json` with aggregate context,
 current evidence IDs, decisions, and relevant issues for the next stage. English
 stage prompts and tool permissions are active; full individual sample tables stay
-local. See [delivery E](docs/staged-workflow/delivery-E.md) for the current
-univariate audit capabilities and verification results, and
-[delivery D](docs/staged-workflow/delivery-D.md) for descriptive statistics.
+local. See [delivery F](docs/staged-workflow/delivery-F.md) for persisted plotting
+sources and objective-specific reports, [delivery E](docs/staged-workflow/delivery-E.md)
+for univariate auditing, and [delivery D](docs/staged-workflow/delivery-D.md) for
+descriptive statistics.
 
 The command prints its output directory. Open `report.md` there; it links to the
 numerical tables and embeds PNG figures. An existing run directory is never
@@ -194,8 +195,8 @@ are counted and recorded as excluded. The direction of all signed effects is
 | `inspect_univariate` | Prepared-data eligibility, observed/imputed counts, paired differences, normality diagnostics, and ties before selecting a test |
 | `set_univariate_plan` | Diagnostic ID, statistical test, correction, hypothesis family, value policy, and purpose for the current dataset |
 | `compare_groups` | Welch, pooled t, Mann–Whitney U, paired t, or Wilcoxon; BH, Holm–Šidák, Holm, or Bonferroni correction |
-| `set_figure_plan` | Figures with current sources and explicit feature selection |
-| `make_plot` | Before/after distributions, boxplots, adjusted-p volcano; diagnostic-only restrictions during preparation |
+| `set_figure_plan` | Figures with current sources, feature-selection rationale, scale, display centering/scaling, ordering, and captions |
+| `make_plot` | Before/after distributions, boxplots with points and pair lines, adjusted-p volcano, and non-clustered heatmaps; exact local sources, display values, and configurations |
 | `read_result` | Bounded result-table inspection by artifact ID, with optional feature filtering |
 | `get_stage_context`, `get_workflow_state`, `read_stage_report` | Aggregate context, current plans, and bounded stage reports |
 | `submit_stage_assessment` | Evidence-linked assessment and validated stage completion |
@@ -229,7 +230,8 @@ Two analysis representations are saved, in addition to operation checkpoints:
 2. Optionally transformed, unscaled values for statistical tests.
 
 An aligned boolean imputation mask is also saved for each newly prepared dataset.
-PCA representations are not computed. Heatmaps remain pending in delivery F.
+PCA representations are not computed. Heatmaps use an independent display-only
+representation derived from a registered concentration or test scale.
 
 Preparation requires full group-wise summaries of raw/original observations and
 both prepared scales (including imputed cells). Additional `observed_only` summaries
@@ -267,6 +269,20 @@ Mann–Whitney includes signed rank-biserial correlation; it does not generally
 test equality of medians. Paired t includes confidence intervals for paired mean
 differences. Undefined fold changes/effects remain missing, not zero.
 
+Each new figure saves its source table, exact display data, configuration, and
+PNG with linked hashes. Histograms save bin edges/counts; boxplots also save
+quartiles, medians and whisker endpoints. Paired boxplots connect complete pairs
+and retain available points without counterparts. Source tables/configurations
+with individual identifiers remain local; aggregate descriptors and caveats pass
+to later stages. The final report links each figure's reproduction files.
+
+Heatmaps require explicit features and complete finite values. Optional per-feature
+mean centering and/or sample-SD scaling apply only to the display matrix. Samples
+follow input order or reference/treatment order; no clustering is performed.
+Volcano plots record omitted points and clip zero adjusted p-values only for the
+display coordinate, preserving numerical inference. Empty or failed figures do
+not satisfy a plan; committed plotting checkpoints remain available.
+
 Multiplicity correction covers valid tested features within each comparison.
 Confidence intervals are not multiplicity-adjusted. Correction across adaptive
 reruns, imputation uncertainty propagation, covariate models, batch correction,
@@ -275,7 +291,10 @@ implemented. Batch metadata is inspected and confounding is flagged, not correct
 
 Completion depends on the registered objective and its required figures.
 Descriptive-only objectives can omit univariate testing and volcano plots with
-saved skip reports. Current comparisons, plans, and figures must agree; historical
+saved skip reports. Reports state the registered scope and stage outcomes, carry
+forward open issue codes and unchecked assumptions, and distinguish current
+evidence from historical attempts. A stopped run preserves linked partial reports
+without declaring completion. Current comparisons, plans, and figures must agree; historical
 results remain available locally after revisions. Numerical
 summaries come from saved calculations; agent interpretations cite existing
 evidence IDs but are not semantically verified. Reports also record the initial

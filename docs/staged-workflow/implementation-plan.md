@@ -1,9 +1,9 @@
 # Plan actualizado: flujo por etapas con evidencias e informes
 
-Este documento describe el plan acordado. A–E están completadas; F–G siguen
-pendientes. Los detalles están en [delivery-B.md](delivery-B.md) y
+Este documento describe el plan acordado. A–F están completadas; G sigue
+pendiente. Los detalles están en [delivery-B.md](delivery-B.md) y
 [delivery-C.md](delivery-C.md), [delivery-D.md](delivery-D.md) y
-[delivery-E.md](delivery-E.md). Los prompts de `prompts/` son los textos aprobados;
+[delivery-E.md](delivery-E.md) y [delivery-F.md](delivery-F.md). Los prompts de `prompts/` son los textos aprobados;
 C instala sus copias en el paquete y activa las instrucciones por etapa. La
 evaluación y refinamiento previstos en G siguen pendientes.
 
@@ -258,7 +258,8 @@ no es aplicable al objetivo, su ausencia se justifica sin invalidar todo el fluj
 Los prompts describen el contrato de destino. C implementa las herramientas de
 coordinación, planes y traspasos; D incorpora `summarize_dataset` y la procedencia
 observada/imputada. E incorpora el diagnóstico univariante, checkpoints de pruebas,
-auditoría e incidencias. Las ampliaciones de figuras de F siguen pendientes.
+auditoría e incidencias. F incorpora las fuentes y representaciones gráficas
+persistidas, heatmap sin clustering e informe condicionado al objetivo.
 El catálogo dinámico es la autoridad
 de capacidades en cada ejecución.
 
@@ -318,6 +319,7 @@ catálogo nuevo y de sus requisitos, pruebas y demo operativa.
   de un LLM real. Solo esta última requiere proveedor/modelo y credenciales.
 
 El entorno y la referencia de A están preparados. La persistencia de B, la
-coordinación de C, los descriptivos de D y la auditoría univariante de E están
-implementados y verificados. Las cinco etapas y sus prompts están activos en
-nuevas ejecuciones; F y G conservan el trabajo pendiente descrito anteriormente.
+coordinación de C, los descriptivos de D, la auditoría univariante de E y las
+figuras e informes de F están implementados y verificados. Las cinco etapas y
+sus prompts están activos en nuevas ejecuciones; G conserva el trabajo pendiente
+descrito anteriormente.

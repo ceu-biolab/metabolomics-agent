@@ -15,9 +15,9 @@ from .report import finish_analysis
 from .evidence_models import StageIssue
 from .state import RunState, clean_json
 from .workflow import COMMON_TOOLS, STAGES, STAGE_TOOLS
-from .workflow_models import (CompareArgs, FigurePlan, FigureSpec, PreprocessingPlan,
+from .workflow_models import (CompareArgs, FigurePlan, FigurePlanV1, FigureSpec, FigureSpecV1, PreprocessingPlan,
                               ReadStageArgs, RevisionArgs, StageAssessment,
-                              SummaryArgs, UnivariatePlan, UnivariatePlanV1, WorkflowPlan)
+                              SummaryArgs, UnivariatePlan, UnivariatePlanV1, WorkflowPlan, WorkflowPlanV1)
 
 
 TOOL_DEFINITIONS = {
@@ -48,14 +48,14 @@ STAGED_DEFINITIONS = {
     "get_workflow_state": (InspectArgs, "Read current stage, plans, aggregate diagnostics, and requirements."),
     "get_stage_context": (InspectArgs, "Read the validated aggregate context and incoming handoff."),
     "read_stage_report": (ReadStageArgs, "Read a bounded stage report summary; sample tables remain local."),
-    "set_workflow_plan": (WorkflowPlan, "Register the objective, descriptive/two-group scope, and required figures."),
+    "set_workflow_plan": (WorkflowPlanV1, "Register the objective, descriptive/two-group scope, and required figures."),
     "set_preprocessing_plan": (PreprocessingPlan, "After inspection, record filtering, imputation, normalization, and transformation choices."),
     "preprocess": (PrepareArgs, "Execute the current preparation plan, saving local checkpoints and separate concentration/test scales. No PCA representation is generated."),
     "inspect_univariate": (DatasetArgs, "Inspect current test-scale counts, observed/imputed origins, complete pairs and normality diagnostics. Returns aggregate artifacts; does not execute group-comparison tests."),
     "set_univariate_plan": (UnivariatePlanV1, "After inspecting univariate inputs, register the diagnostic ID, test, two-sided alternative, including-imputed policy and within-comparison correction family. Later data-informed analyses are exploratory."),
     "compare_groups": (CompareArgs, "Execute the current univariate plan and save the full comparison table."),
-    "set_figure_plan": (FigurePlan, "Register current sources and the figures required to answer the objective."),
-    "make_plot": (FigureSpec, "Create a supported figure. Preparation allows diagnostic distributions/boxplots; visualization requires a registered figure plan."),
+    "set_figure_plan": (FigurePlanV1, "Register current sources, feature selections and rationale, scale, display centering/scaling, order and captions. Supports distributions, boxplots, volcano and non-clustered heatmaps."),
+    "make_plot": (FigureSpecV1, "Save exact local sources, display values, configuration and image using the registered specification. Returns aggregate omissions and provenance only. Preparation allows diagnostic distributions/boxplots; heatmaps are display-only and require complete selected data."),
     "submit_stage_assessment": (StageAssessment, "Record an evidence-linked assessment and request validated stage completion. In reporting this records assessment without finishing; use finish_analysis last."),
     "request_revision": (RevisionArgs, "Create a justified new attempt of the current or an earlier stage. Preserve historical evidence and invalidate affected downstream results."),
     "validate_workflow": (InspectArgs, "Check objective-specific completion and current dependencies before final reporting."),
@@ -80,6 +80,9 @@ class ToolRegistry:
                     continue
                 if name == "set_univariate_plan" and self.state and not self.state.run_info.get("univariate_version"):
                     model = UnivariatePlan
+                if self.state and not self.state.run_info.get("visualization_version"):
+                    model = {"make_plot": FigureSpec, "set_figure_plan": FigurePlan,
+                             "set_workflow_plan": WorkflowPlan}.get(name, model)
                 parameters = model.model_json_schema()
                 if name == "make_plot" and stage == STAGES[1]:
                     parameters["properties"]["kind"]["enum"] = ["distributions", "boxplot"]
@@ -188,6 +191,9 @@ class ToolRegistry:
             model = STAGED_DEFINITIONS[name][0]
             if name == "set_univariate_plan" and not state.run_info.get("univariate_version"):
                 model = UnivariatePlan
+            if not state.run_info.get("visualization_version"):
+                model = {"make_plot": FigureSpec, "set_figure_plan": FigurePlan,
+                         "set_workflow_plan": WorkflowPlan}.get(name, model)
             parsed = model.model_validate(arguments)
             state.event("tool_call", tool=name, stage=workflow.stage, arguments=parsed.model_dump())
             state.evidence._journal("tool_started", tool=name, arguments=parsed.model_dump())
@@ -245,6 +251,8 @@ class ToolRegistry:
                     result = make_plot(state, parsed)
                     if workflow.stage == STAGES[3]:
                         workflow.data.figure_ids.append(result["artifact_id"])
+                    elif state.run_info.get("visualization_version"):
+                        workflow.data.diagnostic_figure_ids.append(result["artifact_id"])
                 elif name == "read_result":
                     artifact = state.artifacts.get(parsed.artifact_id)
                     if not artifact or artifact.get("individual_samples") or artifact["kind"] in {

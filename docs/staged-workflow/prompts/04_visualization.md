@@ -63,3 +63,57 @@ Completion requires the applicable registered figures or an explicit unmet
 requirement. Pass the figure IDs, captions, source links, display caveats, and
 remaining limitations to final reporting. Do not mark an objectively required
 figure as optional merely because generation failed.
+
+## Version 1 plotting contract
+
+Check `visualization_version` in the runtime context. For version 1, each figure
+specification has `kind`, `source_id`, `features`, `scale`, `centering`, `scaling`,
+`sample_order`, `selection_rationale`, and `caption`. Use the exact registered
+specification when calling make_plot; changing any presentation parameter requires
+a visualization revision. Existing archived runs retain their earlier schemas.
+
+- `scale` is `concentrations` (prepared, unlogged values after selected normalization
+  and imputation) or `testing` (the registered test representation). No unit conversion,
+  additional log, pseudocount, or new statistical analysis is performed by plotting.
+  Raw diagnostic plots use the original input scale; use the default concentrations
+  field for that source. State actual units and transformation in captions.
+- `features` preserves explicit order. Empty selection uses the first six source
+  features for distributions/boxplots, or all comparison rows for a volcano.
+  This deterministic fallback is not significance selection. Supply a specific
+  selection rationale whenever selecting illustrative or result-driven features.
+- `sample_order="group"` uses reference then treatment with stable input order
+  inside groups; `input` preserves original sample order. Group ordering is a
+  display convention, not evidence of clustering.
+- Heatmaps require an explicit nonempty feature selection. They use the selected
+  prepared scale and optional `centering="feature_mean"` and/or
+  `scaling="feature_sd"` (sample SD, ddof=1). The defaults are `none`. These are
+  display-only transformations; they never change testing or concentration data.
+  Selected values must be complete and finite. A zero/undefined SD is an error
+  when scaling, not a reason to silently fill or discard a feature.
+- Distributions persist all selected original/prepared source values and exactly
+  18 histogram bins per feature/representation, with saved edges and counts.
+  Missing values are omitted and counted. Separate histograms can have different
+  bin edges; do not interpret them as shared-bin density estimates.
+- Boxplots overlay all available points without jitter. Whiskers use 1.5 IQR;
+  outliers remain among the points. A separate saved aggregate summary records
+  quartiles, median, IQR, whisker endpoints, mean, count and outlier count per
+  feature/group. In paired designs lines connect complete
+  pairs; available points lacking a counterpart remain visible. No significance
+  annotations or extra tests are added. Imputed values remain part of the prepared
+  source and must not be described as additional independent measurements.
+- Volcano display rows require finite log2 fold change and finite adjusted p in
+  [0,1]. Zero adjusted p is clipped to the recorded positive float floor only for
+  display; the original adjusted p remains unchanged. Coloring uses saved alpha
+  and adjusted p. Labels follow source/declared order, not a hidden p-value ranking.
+
+make_plot returns aggregate metadata and references to a local source table,
+display table, and configuration document. Inspect `omitted_values`,
+`clipped_zero_p`, `paired_lines`, `display_notes`, selected features and scale.
+Individual plotting tables and sample-order identifiers cannot be read through
+read_result and must never be copied into the remote context. The final report
+links these local files for review and reproduction.
+
+If generation fails, committed source/display checkpoints and a failure record
+remain available. A failed or empty figure does not satisfy the plan. Correct the
+underlying issue through the appropriate revision; do not weaken a requirement
+to close the stage. Valid upstream numerical results remain available.
