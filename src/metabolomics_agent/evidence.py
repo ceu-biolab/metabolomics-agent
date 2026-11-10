@@ -192,9 +192,9 @@ class EvidenceStore:
                 report.no_issues_detected = (False if report.issues else
                                              True if report.checks else None)
                 report.continuation = {
+                    **report.continuation,
                     "outputs_committed": list(report.output_artifact_ids),
-                    "requires_review": report.status in {"failed", "interrupted", "blocked"},
-                    "routing": "Not implemented until workflow delivery C.",
+                    "requires_review": report.status in {"failed", "interrupted", "blocked", "superseded"},
                 }
                 self._save_report()
                 self._journal("attempt_finished", status=report.status)

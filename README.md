@@ -7,8 +7,11 @@ and its [companion GitBook](https://laboratory-of-lipid-metabolism-a.gitbook.io/
 
 The current scope is **two-group analysis of already quantified concentration or
 intensity tables**. It includes independent and paired designs, missing-value
-handling, univariate tests, PCA, plots, and a Markdown report. It does not process
-raw MS files. No LLM API request is made by installation, tests, or the offline demo.
+handling, descriptive diagnostics, univariate tests, plots, and a Markdown report.
+New runs follow five validated stages: coordination, preparation, univariate
+analysis, visualization, and reporting. Multivariate analysis and batch/QC
+correction are excluded. It does not process raw MS files. No LLM API request is
+made by installation, tests, or the offline demo.
 
 ## Install
 
@@ -34,19 +37,21 @@ python -m metabolomics_agent demo
 This generates a synthetic study with 60 samples and 14 input features, including
 missing values, a constant feature, and an outlier. A **scripted test driver** runs
 through the same tool-calling loop as a live model. It selects imputation based on
-observed missingness, performs a log-scale Welch analysis, generates figures, and
-adds an explicitly exploratory rank-based sensitivity analysis.
+observed missingness, performs a log-scale Welch analysis, and generates figures
+through the five-stage workflow. It does not run PCA. Scientifically justified
+sensitivity analyses can be requested through versioned stage revisions.
 
 The demo verifies the machinery. It does not evaluate a real model's reasoning.
 The synthetic ground truth is not provided to the agent.
 
-Local evidence persistence now records tool attempts under `stages/`, with JSON
+Local evidence persistence records stage attempts under `stages/`, with JSON
 and Markdown reports, operation logs, typed intermediate preprocessing tables,
 imputation masks, and SHA-256 manifests. Failed operations preserve their last
 committed checkpoints; reopening evidence marks unfinished attempts as interrupted.
-This is the persistence layer for the planned staged workflow; stage routing and
-the new prompts are not active yet. See [delivery B](docs/staged-workflow/delivery-B.md)
-for scope, recovery behavior, and verification results.
+Each completed stage also saves a validated `handoff.json` with aggregate context,
+current evidence IDs, decisions, and relevant issues for the next stage. English
+stage prompts and tool permissions are active; full individual sample tables stay
+local. See [delivery C](docs/staged-workflow/delivery-C.md) for scope and validation.
 
 The command prints its output directory. Open `report.md` there; it links to the
 numerical tables and embeds PNG figures. An existing run directory is never
@@ -74,7 +79,8 @@ uses the OpenAI SDK, isolated in `llm.py`. Other API formats can implement the
 small `Provider` protocol. The implementation follows the official
 [function-calling guide](https://developers.openai.com/api/docs/guides/function-calling).
 
-This model has been tested with GPT-6 Luna, but it should theoretically work with other models. 
+The legacy prototype was tested with GPT-6 Luna. The staged workflow is currently
+verified with offline and mocked providers; live model evaluation is pending.
 
 For GPT-6 Luna/Sol (including provider-prefixed names such as `openai/gpt-6-luna`),
 Chat Completions function tools use `reasoning_effort=none`. To enable reasoning
@@ -178,37 +184,48 @@ are counted and recorded as excluded. The direction of all signed effects is
 
 | Tool | Capability |
 |---|---|
+| `set_workflow_plan` | Objective, descriptive/two-group scope, and figure requirements |
 | `inspect_dataset` | Missingness, zeros, distributions, normality diagnostics, outliers, batch/group counts |
-| `set_plan` | Versioned method selection and rationale; later revisions become exploratory |
+| `set_preprocessing_plan` | Preparation choices after inspection, independent of the statistical plan |
 | `preprocess` | Missingness/constant filtering; none/median/half-minimum/kNN imputation; optional median normalization; optional log2/log10 transformation |
+| `set_univariate_plan` | Statistical test, correction, and purpose for the current dataset |
 | `compare_groups` | Welch, pooled t, Mann–Whitney U, paired t, or Wilcoxon; BH, Holm–Šidák, Holm, or Bonferroni correction |
-| `run_pca` | PCA with centering and optional auto/Pareto scaling; scores, loadings, explained variance |
-| `make_plot` | Before/after distributions, boxplots, adjusted-p volcano, PCA, heatmap |
+| `set_figure_plan` | Figures with current sources and explicit feature selection |
+| `make_plot` | Before/after distributions, boxplots, adjusted-p volcano; diagnostic-only restrictions during preparation |
 | `read_result` | Bounded result-table inspection by artifact ID, with optional feature filtering |
+| `get_stage_context`, `get_workflow_state`, `read_stage_report` | Aggregate context, current plans, and bounded stage reports |
+| `submit_stage_assessment` | Evidence-linked assessment and validated stage completion |
+| `request_revision` | New attempt with downstream invalidation and preserved historical evidence |
+| `validate_workflow` | Objective-specific completeness checks |
 | `finish_analysis` | Completeness checks, evidence ID checks, computed summaries, interpretation, figures, limitations |
 
 ```bash
 python -m metabolomics_agent tool-schemas
+python -m metabolomics_agent tool-schemas --stage 03_univariate
 ```
 
-The system prompt is in `src/metabolomics_agent/prompts/system.md`. The agent is
-free to select valid steps and revise plans when the objective or diagnostics
-justify it. The harness rejects mismatched pairing, unsafe log inputs, incomplete
-PCA inputs, unknown tools/arguments, and duplicate testing of the same dataset.
+The current prompts are in `src/metabolomics_agent/prompts/stages/`. Each request
+uses the shared English instructions plus the active stage's prompt and tools.
+The bundle is frozen in run metadata; exact request messages and tools are saved
+under `requests/`. Runtime checks reject out-of-stage tools, mismatched pairing,
+unsafe log inputs, superseded sources, unregistered figures, and duplicate execution
+of a statistical plan. Multivariate tools are not offered in any new stage.
 
-Plans and outputs are immutable. Each plan prepares one dataset directly from
-the original input. A revision creates a new plan and dataset; no cumulative
+Plans and outputs are immutable. Each preparation plan prepares one dataset directly from
+the original input. A preparation revision creates a new plan and dataset; no cumulative
 double transformation occurs. Once a test has run, further analyses require an
 exploratory plan. Trying methods until significance appears is explicitly
 prohibited by the prompt. The harness records choices; it cannot prove the model's
 rationale is scientifically sound.
 
-Three data representations are saved:
+Two analysis representations are saved, in addition to operation checkpoints:
 
 1. Unlogged, unscaled concentrations **after selected imputation/normalization**,
    for group summaries and log2 ratios of arithmetic means.
 2. Optionally transformed, unscaled values for statistical tests.
-3. Separately centered/scaled values for PCA and heatmaps.
+
+PCA representations are not computed for new runs. Heatmaps and the expanded
+descriptive summaries remain pending in subsequent implementation deliveries.
 
 Tests are two-sided. Welch/pooled t analyses include signed Hedges' g and
 feature-wise confidence intervals for mean differences on the test scale.
@@ -222,8 +239,10 @@ reruns, imputation uncertainty propagation, covariate models, batch correction,
 supervised prediction, biological annotation, and pathway analysis are not
 implemented. Batch metadata is inspected and confounding is flagged, not corrected.
 
-Completion requires a tested current plan, at least one PCA, and distribution,
-volcano, and PCA figures. Reports include every comparison and plan. Numerical
+Completion depends on the registered objective and its required figures.
+Descriptive-only objectives can omit univariate testing and volcano plots with
+saved skip reports. Current comparisons, plans, and figures must agree; historical
+results remain available locally after revisions. Numerical
 summaries come from saved calculations; agent interpretations cite existing
 evidence IDs but are not semantically verified. Reports also record the initial
 user request, model-visible study configuration, and local input snapshots/hashes.
@@ -237,8 +256,12 @@ python -m metabolomics_agent resume --run runs/your-run \
   --request "Continue from the saved outputs and finish the report."
 ```
 
-Resume restores numerical snapshots and the original conversation without
-repeating completed calls. It requires the same model, endpoint, and API format. The aggregate
+Resume restores numerical snapshots, stage position, frozen prompts, and the
+original conversation without repeating completed calls. It requires the same
+model, endpoint, and API format. Old runs retain their legacy protocol and are
+not silently migrated. The legacy library protocol (`RunState(..., protocol="legacy")`)
+is retained for historical verification; new CLI and default library runs use `staged_v1`.
+The aggregate
 token allowance remains cumulative across sessions; turn/tool/time limits apply
 to the new invocation. Increasing limits is an explicit configuration change.
 Runs with unresolved/truncated tool-call batches cannot be resumed automatically.
@@ -291,5 +314,8 @@ src/metabolomics_agent/
   report.py         computed report and evidence-linked interpretation
   cli.py            command-line entry point
   benchmark.py      selected exact GitBook reference checks
-  prompts/system.md scientific behavior and tool-use guidance
+  workflow.py       stage contracts, transitions, revisions, and handoffs
+  workflow_models.py independent workflow/preparation/statistical/figure plans
+  prompts/stages/   shared and stage-specific English instructions
+  prompts/system.md legacy scientific behavior and tool-use guidance
 ```

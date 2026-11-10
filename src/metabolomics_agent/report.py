@@ -5,19 +5,28 @@ from .state import RunState, dumps
 
 
 def finish_analysis(state: RunState, args: FinishArgs):
-    if not state.comparisons or not state.pcas:
+    if state.workflow:
+        validation = state.workflow.validate(final=True)
+        if not validation["valid"]:
+            raise ValueError(" ".join(validation["errors"]))
+        comparisons = {cid: state.comparisons[cid] for cid in state.workflow.data.comparison_ids}
+    else:
+        comparisons = state.comparisons
+    if not state.workflow and (not state.comparisons or not state.pcas):
         raise ValueError("Complete at least one group comparison and PCA before finishing.")
     kinds = {a["kind"] for a in state.artifacts.values()}
-    if not {"volcano", "pca", "distributions"} <= kinds:
+    if not state.workflow and not {"volcano", "pca", "distributions"} <= kinds:
         raise ValueError("Generate volcano, PCA, and distribution plots before finishing.")
-    if not any(a["kind"] == "distributions" and a.get("source_id") in state.datasets
-               for a in state.artifacts.values()):
+    if not state.workflow and not any(a["kind"] == "distributions" and a.get("source_id") in state.datasets
+                                      for a in state.artifacts.values()):
         raise ValueError("Generate a distributions plot with a prepared dataset ID (d...) "
                          "to compare before and after preprocessing; raw-only plots are insufficient.")
-    latest_plan = next(reversed(state.plans))
-    if not any(c["plan_id"] == latest_plan for c in state.comparisons.values()):
-        raise ValueError("The latest analysis plan has not been tested. Complete it before finishing.")
-    known = set(state.artifacts) | set(state.plans) | set(state.comparisons) | set(state.pcas)
+    if not state.workflow:
+        latest_plan = next(reversed(state.plans))
+        if not any(c["plan_id"] == latest_plan for c in state.comparisons.values()):
+            raise ValueError("The latest analysis plan has not been tested. Complete it before finishing.")
+    known = (state.workflow.evidence_ids() if state.workflow else
+             set(state.artifacts) | set(state.plans) | set(state.comparisons) | set(state.pcas))
     unknown = {aid for finding in args.findings for aid in finding.evidence_ids if aid not in known}
     if unknown:
         raise ValueError(f"Unknown evidence IDs: {sorted(unknown)}")
@@ -31,7 +40,7 @@ def finish_analysis(state: RunState, args: FinishArgs):
              "These summaries are generated directly from saved numerical outputs.", ""]
     if state.excluded_groups:
         lines += [f"Groups outside the configured comparison were excluded: {state.excluded_groups}.", ""]
-    for cid, result in state.comparisons.items():
+    for cid, result in comparisons.items():
         artifact = state.artifacts[result["artifact_id"]]
         lines += [f"### {cid}: {result['purpose']}", "",
                   f"Plan: {result['plan_id']}; dataset: {result['dataset_id']}. "
@@ -48,9 +57,15 @@ def finish_analysis(state: RunState, args: FinishArgs):
         lines += ["", "Feature-wise confidence intervals are unadjusted. Statistical significance "
                   "does not by itself establish biological relevance.", ""]
     lines += ["## Analysis decisions", ""]
-    for pid, plan in state.plans.items():
-        lines += [f"- **{pid} ({plan.purpose})**: {plan.rationale}",
+    plans = state.preprocessing_plans if state.workflow else state.plans
+    for pid, plan in plans.items():
+        purpose = getattr(plan, "purpose", "preparation")
+        lines += [f"- **{pid} ({purpose})**: {plan.rationale}",
                   f"  [Complete parameters]({pid}_plan.json)"]
+    if state.workflow:
+        for pid, plan in state.univariate_plans.items():
+            lines += [f"- **{pid} ({plan.purpose})**: {plan.rationale}",
+                      f"  [Complete parameters]({pid}_plan.json)"]
     lines += ["", "## Agent interpretation", "",
               "Evidence IDs are checked for existence. Interpretations require scientific review; "
               "the harness does not verify every natural-language claim.", ""]
@@ -62,15 +77,23 @@ def finish_analysis(state: RunState, args: FinishArgs):
                   "is applied within each comparison, not across adaptively selected reruns.",
                   "No covariate adjustment, batch correction, pathway analysis, or causal inference "
                   "is implemented in this prototype."]
-    if any(p.imputation != "none" for p in state.plans.values()):
+    if any(p.imputation != "none" for p in plans.values()):
         limitations.append("Imputation uncertainty is not propagated into p-values or confidence intervals.")
+    if state.workflow:
+        limitations.extend(state.workflow.limitations())
+        limitations.extend(issue.message for issue in state.workflow.issues()
+                           if issue.resolution == "open")
+        limitations = list(dict.fromkeys(limitations))
     lines += [f"- {item}" for item in limitations]
-    lines += ["", "## PCA", ""]
+    if not state.workflow:
+        lines += ["", "## PCA", ""]
     for pid, result in state.pcas.items():
         percentages = ", ".join(f"PC{i+1}: {v:.1%}" for i, v in enumerate(result["explained_variance_ratio"]))
         lines += [f"- {pid}, dataset {result['dataset_id']}: {percentages}. "]
     lines += ["", "## Figures", ""]
     for aid, artifact in state.artifacts.items():
+        if state.workflow and aid not in state.workflow.data.figure_ids:
+            continue
         if artifact["path"].endswith(".png"):
             lines += [f"### {aid}: {artifact['kind']} ({artifact['source_id']})", "",
                       f"![{artifact['kind']}]({artifact['path']})", ""]
@@ -94,6 +117,13 @@ def finish_analysis(state: RunState, args: FinishArgs):
         lines += [f"- {Path(source['path']).name}: `{source['sha256']}`"]
     if (state.output_dir / "model_input.json").exists():
         lines += ["", "[Exact initial messages and tool definitions](model_input.json)."]
+    if state.workflow:
+        lines += ["", "## Stage reports", ""]
+        for stage, path in state.workflow.data.completed_reports.items():
+            lines += [f"- [{stage}]({path.replace('.json', '.md')})"]
+        current = state.workflow.data.current_attempt
+        lines += [f"- [05_reporting]({current.replace('.json', '.md')})", "",
+                  "[Workflow state](workflow_state.json). Per-request contexts are saved under requests/."]
     lines += [""]
     lines += ["## Reproducibility", "",
               "See [run metadata](run.json), [run state](state.json), "
@@ -104,10 +134,11 @@ def finish_analysis(state: RunState, args: FinishArgs):
               "This run is not an exact GitBook reproduction unless explicitly configured as one.", ""]
     state.evidence.atomic_write("report.md", lambda path: path.write_text("\n".join(lines)))
     state.write_json("findings.json", args.model_dump())
-    state.finished = True
-    state.status = "complete"
+    if not state.workflow:
+        state.finished = True
+        state.status = "complete"
     incomplete = state.output_dir / "incomplete.md"
     if incomplete.exists():
         incomplete.unlink()
-    return {"status": "complete", "report": "report.md", "comparisons": list(state.comparisons),
+    return {"status": "complete", "report": "report.md", "comparisons": list(comparisons),
             "artifacts": len(state.artifacts)}

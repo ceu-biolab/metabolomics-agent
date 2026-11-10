@@ -60,7 +60,7 @@ class StageReport(Model):
     tool: str
     status: Literal[
         "running", "completed", "completed_with_warnings", "blocked", "failed",
-        "interrupted", "skipped",
+        "interrupted", "skipped", "superseded",
     ] = "running"
     started_at: str
     finished_at: str | None = None

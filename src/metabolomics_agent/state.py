@@ -11,13 +11,15 @@ from .data import load_study
 from .evidence import EvidenceStore, digest
 from .models import AnalysisPlan, StudyConfig
 from .serialization import clean_json as clean_json, dumps as dumps
+from .workflow import Workflow
+from .workflow_models import FigurePlan, PreprocessingPlan, UnivariatePlan, WorkflowPlan
 
 
 @dataclass
 class Dataset:
     concentrations: pd.DataFrame
     testing: pd.DataFrame
-    pca_values: pd.DataFrame
+    pca_values: pd.DataFrame | None
     plan_id: str
     artifact_ids: dict[str, str] = field(default_factory=dict)
 
@@ -29,9 +31,9 @@ class RunState:
         self = cls.__new__(cls)
         self.output_dir = output_dir.resolve()
         saved = json.loads((self.output_dir / "state.json").read_text())
-        if saved.get("schema_version", 1) not in {1, 2}:
+        if saved.get("schema_version", 1) not in {1, 2, 3}:
             raise ValueError("Unsupported run state schema version.")
-        if saved.get("schema_version") == 2 and not (self.output_dir / "evidence_index.json").is_file():
+        if saved.get("schema_version", 1) >= 2 and not (self.output_dir / "evidence_index.json").is_file():
             raise ValueError("Missing evidence index for this run state version.")
         self.run_info = json.loads((self.output_dir / "run.json").read_text())
         if saved["finished"]:
@@ -39,7 +41,16 @@ class RunState:
         self.evidence = EvidenceStore(self.output_dir, recover=True)
         self.config = StudyConfig.model_validate(self.run_info["study"])
         self.seed = self.run_info["seed"]
+        self.protocol = self.run_info.get("protocol", "legacy")
+        if self.protocol not in {"legacy", "staged_v1"}:
+            raise ValueError("Unsupported workflow protocol; cannot migrate a saved run implicitly.")
+        if self.protocol == "staged_v1" and not saved.get("workflow"):
+            raise ValueError("Missing staged workflow state.")
         self.plans = {pid: AnalysisPlan.model_validate(p) for pid, p in saved["plans"].items()}
+        for attribute, model in [("workflow_plans", WorkflowPlan), ("preprocessing_plans", PreprocessingPlan),
+                                 ("univariate_plans", UnivariatePlan), ("figure_plans", FigurePlan)]:
+            setattr(self, attribute, {pid: model.model_validate(plan)
+                                     for pid, plan in saved.get(attribute, {}).items()})
         self.artifacts = saved["artifacts"]
         for artifact in self.artifacts.values():
             path = (self.output_dir / artifact["path"]).resolve()
@@ -75,14 +86,25 @@ class RunState:
         self.datasets = {did: Dataset(
             load("concentrations", did, d.get("artifact_ids", {}).get("concentrations")),
             load("testing_values", did, d.get("artifact_ids", {}).get("testing")),
-            load("pca_values", did, d.get("artifact_ids", {}).get("pca")),
+            (load("pca_values", did, d.get("artifact_ids", {}).get("pca"))
+             if self.protocol == "legacy" else None),
             d["plan_id"], d.get("artifact_ids", {}))
                          for did, d in saved["datasets"].items()}
+        self.workflow = Workflow(self, saved["workflow"]) if self.protocol == "staged_v1" else None
         return self
 
-    def __init__(self, config: StudyConfig, base_dir: Path, output_dir: Path, seed: int = 42):
+    def __init__(self, config: StudyConfig, base_dir: Path, output_dir: Path, seed: int = 42,
+                 *, protocol="staged_v1"):
+        if protocol not in {"legacy", "staged_v1"}:
+            raise ValueError("Unsupported workflow protocol.")
         self.config = config
         self.seed = seed
+        self.protocol = protocol
+        self.workflow = None
+        self.workflow_plans = {}
+        self.preprocessing_plans = {}
+        self.univariate_plans = {}
+        self.figure_plans = {}
         self.output_dir = output_dir.resolve()
         # A run directory is immutable across runs. Never overwrite prior evidence.
         self.output_dir.mkdir(parents=True, exist_ok=False)
@@ -97,6 +119,7 @@ class RunState:
         self.status = "created"
         self.events = 0
         self.run_info = {
+            "protocol": protocol,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "study": config.model_dump(), "seed": seed, "python": platform.python_version(),
             "inputs": [],
@@ -117,6 +140,9 @@ class RunState:
                                     self.raw.index.equals(self.metadata.index),
                                     passed=self.raw.index.equals(self.metadata.index),
                                     message="Input and metadata sample IDs must align.", severity="error")
+            self.write_json("run.json", self.run_info)
+        if protocol == "staged_v1":
+            self.workflow = Workflow(self)
             self.write_json("run.json", self.run_info)
         self.snapshot()
 
@@ -181,8 +207,16 @@ class RunState:
         return self.datasets[did]
 
     def snapshot(self):
+        workflow = self.workflow.data.model_dump() if self.workflow else None
+        if workflow:
+            self.write_json("workflow_state.json", workflow)
         self.write_json("state.json", {
-            "schema_version": 2,
+            "schema_version": 3 if workflow else 2,
+            "workflow": workflow,
+            "workflow_plans": {key: value.model_dump() for key, value in self.workflow_plans.items()},
+            "preprocessing_plans": {key: value.model_dump() for key, value in self.preprocessing_plans.items()},
+            "univariate_plans": {key: value.model_dump() for key, value in self.univariate_plans.items()},
+            "figure_plans": {key: value.model_dump() for key, value in self.figure_plans.items()},
             "status": self.status, "finished": self.finished, "inspected": self.inspected,
             "plans": {k: v.model_dump() for k, v in self.plans.items()},
             "datasets": {k: {"plan_id": d.plan_id, "artifact_ids": d.artifact_ids,

@@ -16,7 +16,8 @@ class Agent:
 
     def run(self, request: str, *, progress=print, resume=False):
         state, config = self.state, self.config
-        system = files("metabolomics_agent").joinpath("prompts/system.md").read_text()
+        system = (state.workflow.prompt() if state.workflow else
+                  files("metabolomics_agent").joinpath("prompts/system.md").read_text())
         if resume:
             self.messages = json.loads((state.output_dir / "conversation.json").read_text())
             pending = set()
@@ -85,12 +86,22 @@ class Agent:
                 if remaining_seconds <= 0:
                     state.status = "time_limit"
                     break
+                if state.workflow:
+                    state.workflow.activate()
+                    request_messages = [
+                        {"role": "system", "content": state.workflow.prompt()},
+                        *self.messages[1:],
+                        {"role": "user", "content": dumps({"stage_context": state.workflow.context()})},
+                    ]
+                else:
+                    request_messages = self.messages
+                request_tools = self.registry.schemas()
                 # UTF-8 bytes plus protocol overhead is a deliberately conservative
                 # input-token estimate. Provider-reported usage replaces it after a call.
-                payload_bytes = len(json.dumps({"messages": self.messages,
-                                               "tools": self.registry.schemas()}, ensure_ascii=False).encode())
-                input_bound = payload_bytes + 64 * (len(self.messages) + len(self.registry.schemas()))
-                if anchor_tokens is not None:
+                payload_bytes = len(json.dumps({"messages": request_messages,
+                                               "tools": request_tools}, ensure_ascii=False).encode())
+                input_bound = payload_bytes + 64 * (len(request_messages) + len(request_tools))
+                if anchor_tokens is not None and not state.workflow:
                     added = self.messages[anchor_count:]
                     input_bound = anchor_tokens + len(json.dumps(added, ensure_ascii=False).encode()) + 64 * (len(added) + 2)
                 remaining = config.max_total_tokens - total_tokens
@@ -98,7 +109,13 @@ class Agent:
                     state.status = "token_limit"
                     break
                 completion_limit = min(config.max_completion_tokens, remaining - input_bound)
-                reply = self.provider.complete(self.messages, self.registry.schemas(),
+                if state.workflow:
+                    number = max((int(path.stem.split("_")[1]) for path in
+                                  (state.output_dir / "requests").glob("request_*.json")), default=0) + 1
+                    state.write_json(f"requests/request_{number:04d}.json", {
+                        "stage": state.workflow.stage, "messages": request_messages, "tools": request_tools,
+                    })
+                reply = self.provider.complete(request_messages, request_tools,
                                                max_tokens=completion_limit,
                                                timeout=min(config.timeout_seconds, remaining_seconds))
                 turns_used += 1
@@ -135,7 +152,11 @@ class Agent:
                     function = call.get("function", {})
                     name, arguments = function.get("name", ""), function.get("arguments", "")
                     progress(f"[{turn:02d}] {name}")
-                    if time.monotonic() - started >= config.max_run_seconds:
+                    offered = {tool["function"]["name"] for tool in request_tools}
+                    if state.workflow and name not in offered:
+                        result = {"ok": False, "error": "Tool was not offered in this request's stage."}
+                        state.event("tool_error", tool=name, error=result["error"])
+                    elif time.monotonic() - started >= config.max_run_seconds:
                         result = {"ok": False, "error": "Run time limit reached before tool execution."}
                         state.status = "time_limit"
                     elif name == "finish_analysis" and index != len(calls) - 1:
@@ -145,15 +166,20 @@ class Agent:
                         result = self.registry.execute(name, arguments)
                     self.messages.append({"role": "tool", "tool_call_id": call["id"], "content": dumps(result)})
                     state.write_json("conversation.json", self.messages)
-                if state.finished or state.status == "time_limit":
+                if state.finished or state.status in {"time_limit", "needs_input"}:
                     break
             else:
                 state.status = "turn_limit"
-        except Exception as error:
-            state.status = "failed"
+        except BaseException as error:
+            state.status = "failed" if isinstance(error, Exception) else "interrupted"
             state.event("run_error", error_type=type(error).__name__)
             raise
         finally:
+            if state.workflow and not state.finished:
+                state.workflow.interrupt(
+                    f"Agent invocation ended with status {state.status}.",
+                    status="failed" if state.status == "failed" else "interrupted",
+                )
             state.run_info["usage"] = {"total_tokens": total_tokens, "tool_calls": tool_count,
                                        "model_turns": previous_model_turns + turns_used,
                                        "elapsed_seconds": prior_usage.get("elapsed_seconds", 0) + time.monotonic() - started}

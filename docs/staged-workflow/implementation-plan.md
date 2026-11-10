@@ -1,9 +1,10 @@
 # Plan actualizado: flujo por etapas con evidencias e informes
 
-Este documento describe el plan acordado. A y B están completadas; C–G siguen
-pendientes. El detalle de B está en [delivery-B.md](delivery-B.md). Los prompts de
-`prompts/` son propuestas completas para el nuevo flujo; todavía no los carga el
-agente. B incorpora persistencia al flujo anterior, sin activar su nueva coordinación.
+Este documento describe el plan acordado. A, B y C están completadas; D–G siguen
+pendientes. Los detalles están en [delivery-B.md](delivery-B.md) y
+[delivery-C.md](delivery-C.md). Los prompts de `prompts/` son los textos aprobados;
+C instala sus copias en el paquete y activa las instrucciones por etapa. La
+evaluación y refinamiento previstos en G siguen pendientes.
 
 ## 1. Alcance y decisiones
 
@@ -253,9 +254,10 @@ volcano de p ajustado y heatmap sin clustering opcional. El heatmap tendrá una
 representación gráfica propia explícita; no depende de `pca_values`. Si una figura
 no es aplicable al objetivo, su ausencia se justifica sin invalidar todo el flujo.
 
-Los prompts propuestos describen el contrato de destino: las herramientas nuevas
-no estarán disponibles hasta implementar sus esquemas y validadores. El catálogo
-dinámico es la autoridad de capacidades en cada ejecución.
+Los prompts describen el contrato de destino. C implementa las herramientas de
+coordinación, planes y traspasos. Las ampliaciones científicas de D–F, incluida
+`summarize_dataset`, aún no están disponibles. El catálogo dinámico es la autoridad
+de capacidades en cada ejecución.
 
 ## 7. Cambios en el código
 
@@ -312,6 +314,7 @@ catálogo nuevo y de sus requisitos, pruebas y demo operativa.
 - No se confunden pruebas offline del funcionamiento con evaluación de decisiones
   de un LLM real. Solo esta última requiere proveedor/modelo y credenciales.
 
-El entorno local y la referencia de A están preparados. La infraestructura de B
-está implementada y verificada. La coordinación y los prompts del nuevo flujo
-no se activarán hasta sus entregas correspondientes.
+El entorno y la referencia de A están preparados. La persistencia de B y la
+coordinación de C están implementadas y verificadas. Las cinco etapas y sus
+prompts están activos en nuevas ejecuciones; D–G conservan el trabajo pendiente
+descrito anteriormente.

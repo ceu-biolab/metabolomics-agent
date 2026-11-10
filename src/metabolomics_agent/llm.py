@@ -113,7 +113,7 @@ class OpenAICompatibleProvider:
         return Reply(message, usage, reason)
 
 
-class DemoProvider:
+class LegacyDemoProvider:
     """A deterministic test driver, not an LLM. Uses actual tool observations.
 
     The scripted adaptation exercises the same agent loop and tools as a live run.
@@ -180,4 +180,71 @@ class DemoProvider:
             "id": f"demo_call_{self.step}", "type": "function", "function": {
                 "name": name, "arguments": json.dumps(arguments),
             },
+        }]}, {"total_tokens": 0}, "tool_calls")
+
+
+class DemoProvider(LegacyDemoProvider):
+    """Scripted five-stage driver; preserves legacy replay for reference tests."""
+
+    def complete(self, messages, tools, *, max_tokens, timeout):
+        if not any(tool["function"]["name"] == "get_stage_context" for tool in tools):
+            return super().complete(messages, tools, max_tokens=max_tokens, timeout=timeout)
+        results = [json.loads(message["content"]) for message in messages if message["role"] == "tool"]
+        if any(not result.get("ok") for result in results):
+            raise ProviderError("Offline staged demo encountered a tool error; inspect stage reports.")
+        values = [result["result"] for result in results]
+        inspection = next((value for value in values if "missing_cells" in value), {})
+        figures = [
+            {"kind": "distributions", "source_id": "d001"},
+            {"kind": "volcano", "source_id": "c001"},
+            {"kind": "boxplot", "source_id": "d001", "features": ["lipid_01", "lipid_02"]},
+        ]
+        steps = [
+            ("set_workflow_plan", {
+                "objective": "Compare the synthetic condition and control groups with an auditable univariate analysis.",
+                "rationale": "Prepare the quantified table, compare the two independent groups, and show diagnostic and result figures.",
+                "required_figures": ["distributions", "volcano", "boxplot"],
+            }),
+            ("submit_stage_assessment", {"summary": "The supported two-group objective and required figures are registered."}),
+            ("inspect_dataset", {}),
+            ("set_preprocessing_plan", {
+                "rationale": "Use log2 to reduce right skew and median imputation when observed missingness requires it.",
+                "imputation": "median" if inspection.get("missing_cells", 0) else "none", "transform": "log2",
+            }),
+            ("preprocess", {"plan_id": "pp001"}),
+            ("submit_stage_assessment", {
+                "summary": "Preparation and its checkpoints are complete; imputation uncertainty remains a limitation.",
+                "limitations": ["Median imputation assumes that observed values are informative."],
+            }),
+            ("set_univariate_plan", {
+                "dataset_id": "d001", "rationale": "Compare log-scale means with Welch and BH correction across retained features.",
+                "test": "welch_t", "correction": "fdr_bh",
+            }),
+            ("compare_groups", {"dataset_id": "d001", "plan_id": "u001"}),
+            ("submit_stage_assessment", {"summary": "The prespecified univariate comparison has been saved."}),
+            ("set_figure_plan", {
+                "rationale": "Show preprocessing effects, adjusted-p results, and individual values for two illustrative features.",
+                "figures": figures,
+            }),
+            *[("make_plot", figure) for figure in figures],
+            ("submit_stage_assessment", {"summary": "All planned univariate and diagnostic figures are saved."}),
+            ("validate_workflow", {}),
+        ]
+        if self.step < len(steps):
+            name, arguments = steps[self.step]
+        else:
+            comparison = next(value for value in values if value.get("comparison_id") == "c001")
+            name, arguments = "finish_analysis", {
+                "findings": [{
+                    "text": f"The analysis tested {comparison['features_tested']} features; "
+                            f"{comparison['significant_features']} had BH-adjusted p < 0.05.",
+                    "evidence_ids": ["c001"],
+                }],
+                "limitations": ["Synthetic data and scripted decisions; no live LLM was evaluated.",
+                                "Imputation uncertainty is not propagated into inference."],
+            }
+        self.step += 1
+        return Reply({"role": "assistant", "content": None, "tool_calls": [{
+            "id": f"staged_demo_{self.step}", "type": "function",
+            "function": {"name": name, "arguments": json.dumps(arguments)},
         }]}, {"total_tokens": 0}, "tool_calls")

@@ -25,7 +25,7 @@ def independent_study(tmp_path):
 @pytest.fixture
 def state(independent_study):
     cfg, root, _ = independent_study
-    return RunState(cfg, root, root / "run")
+    return RunState(cfg, root, root / "run", protocol="legacy")
 
 
 @pytest.fixture

@@ -69,7 +69,8 @@ def make_plot(state: RunState, args: PlotArgs):
                     axes[i, 0].set_title(f"{feature}: input")
                     if dataset:
                         sns.histplot(dataset.testing[feature].dropna(), ax=axes[i, 1], bins=18, color="#bf3e36")
-                        transform = state.plans[dataset.plan_id].transform
+                        transform = (state.preprocessing_plans.get(dataset.plan_id)
+                                     or state.plans[dataset.plan_id]).transform
                         axes[i, 1].set_title(f"{feature}: test scale ({transform})")
             elif kind == "boxplot":
                 fig, axes = plt.subplots(1, len(features), figsize=(max(6, 3 * len(features)), 5), squeeze=False)

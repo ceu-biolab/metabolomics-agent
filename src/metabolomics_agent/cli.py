@@ -15,6 +15,7 @@ from .examples import generate_example
 from .llm import DemoProvider, OpenAICompatibleProvider, ProviderError
 from .models import LLMConfig, StudyConfig
 from .state import RunState, dumps
+from .workflow import STAGES
 
 
 def llm_config_from_env() -> LLMConfig:
@@ -60,7 +61,8 @@ def main(argv=None):
     benchmark = commands.add_parser("reference-check", help="Check selected published GitBook numbers, without an LLM")
     benchmark.add_argument("--dataset", type=Path, required=True)
     benchmark.add_argument("--output", type=Path)
-    commands.add_parser("tool-schemas", help="Print the exact function schemas exposed to the model")
+    schemas = commands.add_parser("tool-schemas", help="Print staged function schemas (coordination by default)")
+    schemas.add_argument("--stage", choices=STAGES, default=STAGES[0])
     args = parser.parse_args(argv)
     try:
         if args.command == "make-example":
@@ -69,7 +71,7 @@ def main(argv=None):
         if args.command == "tool-schemas":
             from .tools import ToolRegistry
 
-            print(dumps(ToolRegistry(None).schemas()))
+            print(dumps(ToolRegistry(None).schemas(stage=args.stage)))
             return 0
         if args.command == "reference-check":
             summary = reference_check(args.dataset, args.output or default_output("reference"))
