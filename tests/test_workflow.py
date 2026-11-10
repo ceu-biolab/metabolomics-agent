@@ -51,9 +51,13 @@ def prepare_staged(tools, **options):
 
 def compare_staged(tools, **options):
     workflow = tools.state.workflow
+    diagnostic = {}
+    if tools.state.run_info.get("univariate_version"):
+        result = call(tools, "inspect_univariate", {"dataset_id": workflow.data.dataset_id})
+        diagnostic = {"diagnostic_id": result["diagnostic_id"]}
     plan = call(tools, "set_univariate_plan", {
         "dataset_id": workflow.data.dataset_id,
-        "rationale": "Compare the independent group means with multiplicity correction.", **options,
+        "rationale": "Compare the independent group means with multiplicity correction.", **diagnostic, **options,
     })
     result = call(tools, "compare_groups", {
         "dataset_id": workflow.data.dataset_id, "plan_id": plan["plan_id"],

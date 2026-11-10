@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from .serialization import clean_json
+from .provenance import prepared_source
 
 
 CONVENTIONS = {
@@ -34,29 +35,7 @@ def _source(state, args):
         }
     if args.scale == "original":
         raise ValueError("Original-scale summaries require dataset_id='raw'.")
-    dataset = state.dataset(args.dataset_id)
-    if dataset.imputation_mask is None:
-        raise ValueError("This dataset has no saved imputation mask; use a descriptive-enabled run.")
-    plan = state.preprocessing_plans[dataset.plan_id]
-    values = dataset.concentrations if args.scale == "concentrations" else dataset.testing
-    observed = raw.loc[values.index, values.columns].notna()
-    if plan.zero_as_missing:
-        observed &= raw.loc[values.index, values.columns] != 0
-    mask = dataset.imputation_mask
-    if (not mask.index.equals(values.index) or not mask.columns.equals(values.columns)
-            or mask.isna().any().any() or not all(dtype == bool for dtype in mask.dtypes)):
-        raise ValueError("Imputation mask must be boolean and aligned with the prepared data.")
-    if ((mask & observed) | (mask & values.isna()) |
-            (values.notna() & ~observed & ~mask)).any().any():
-        raise ValueError("Prepared values disagree with their saved observed/imputed provenance.")
-    key = "concentrations" if args.scale == "concentrations" else "testing"
-    inputs += [dataset.artifact_ids[key], dataset.artifact_ids["imputation_mask"]]
-    transform = plan.transform if args.scale == "testing" else "none"
-    return values, observed, mask, {
-        "plan_id": dataset.plan_id, "transform": transform, "normalization": plan.normalization,
-        "zero_as_missing": plan.zero_as_missing, "ratio_scale": transform == "none",
-        "input_artifact_ids": inputs,
-    }
+    return prepared_source(state, args.dataset_id, args.scale)
 
 
 def _metrics(values, *, ratio_scale, include_mode):

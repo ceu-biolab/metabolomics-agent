@@ -196,6 +196,7 @@ class DemoProvider(LegacyDemoProvider):
         inspection = next((value for value in values if "missing_cells" in value), {})
         context = json.loads(messages[-1].get("content") or "{}").get("stage_context", {})
         descriptive = bool(context.get("descriptive_version"))
+        audited_univariate = bool(context.get("univariate_version"))
         figures = [
             {"kind": "distributions", "source_id": "d001"},
             {"kind": "volcano", "source_id": "c001"},
@@ -223,9 +224,11 @@ class DemoProvider(LegacyDemoProvider):
                 "summary": "Preparation and its checkpoints are complete; imputation uncertainty remains a limitation.",
                 "limitations": ["Median imputation assumes that observed values are informative."],
             }),
+            *([("inspect_univariate", {"dataset_id": "d001"})] if audited_univariate else []),
             ("set_univariate_plan", {
                 "dataset_id": "d001", "rationale": "Compare log-scale means with Welch and BH correction across retained features.",
                 "test": "welch_t", "correction": "fdr_bh",
+                **({"diagnostic_id": "uv001"} if audited_univariate else {}),
             }),
             ("compare_groups", {"dataset_id": "d001", "plan_id": "u001"}),
             ("submit_stage_assessment", {"summary": "The prespecified univariate comparison has been saved."}),

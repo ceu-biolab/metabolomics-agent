@@ -14,7 +14,7 @@ COMMON_TOOLS = {"get_workflow_state", "get_stage_context", "read_stage_report", 
 STAGE_TOOLS = {
     STAGES[0]: {"set_workflow_plan"},
     STAGES[1]: {"inspect_dataset", "summarize_dataset", "set_preprocessing_plan", "preprocess", "make_plot"},
-    STAGES[2]: {"set_univariate_plan", "compare_groups"},
+    STAGES[2]: {"inspect_univariate", "set_univariate_plan", "compare_groups"},
     STAGES[3]: {"set_figure_plan", "make_plot"},
     STAGES[4]: {"validate_workflow", "finish_analysis"},
 }
@@ -46,6 +46,8 @@ class Workflow:
         allowed = COMMON_TOOLS | STAGE_TOOLS[self.stage]
         if not self.state.run_info.get("descriptive_version"):
             allowed = allowed - {"summarize_dataset"}
+        if not self.state.run_info.get("univariate_version"):
+            allowed = allowed - {"inspect_univariate"}
         return allowed
 
     def prompt(self):
@@ -65,6 +67,14 @@ class Workflow:
             summary = self.state.descriptive_summaries[sid]
             result.extend(summary["artifacts"].values())
             result.append(summary["metadata_artifact_id"])
+        if self.data.univariate_diagnostic_id:
+            diagnostic = self.state.univariate_diagnostics[self.data.univariate_diagnostic_id]
+            result.extend(diagnostic["artifacts"].values())
+            result.append(diagnostic["metadata_artifact_id"])
+        for uid in self.data.univariate_attempt_ids:
+            attempt = self.state.univariate_attempts[uid]
+            result.extend(attempt["artifacts"].values())
+            result.append(attempt["metadata_artifact_id"])
         if self.data.dataset_id:
             result.extend(self.state.datasets[self.data.dataset_id].artifact_ids.values())
         result.extend(self.state.comparisons[cid]["artifact_id"] for cid in self.data.comparison_ids)
@@ -74,6 +84,9 @@ class Workflow:
     def evidence_ids(self):
         ids = set(self.current_artifacts()) | set(self.data.comparison_ids)
         ids.update(self.data.summary_ids)
+        ids.update(self.data.univariate_attempt_ids)
+        if self.data.univariate_diagnostic_id:
+            ids.add(self.data.univariate_diagnostic_id)
         ids |= {value for value in self.plan_refs().values() if value}
         if self.data.dataset_id:
             ids.add(self.data.dataset_id)
@@ -96,6 +109,13 @@ class Workflow:
         return any(summary["dataset_id"] == dataset_id and summary["scale"] == scale
                    and summary["value_policy"] == policy and summary["grouping"] == "group"
                    and summary["all_features"] for summary in self.summary_descriptors())
+
+    def univariate_descriptors(self):
+        keys = {"attempt_id", "dataset_id", "plan_id", "diagnostic_id", "status", "failure_reason",
+                "artifacts", "features_tested", "features_skipped", "tests_executed", "features_in_attempt",
+                "features_with_raw_p", "correction_completed", "issue_counts", "metadata_artifact_id"}
+        return [{key: value for key, value in self.state.univariate_attempts[uid].items() if key in keys}
+                for uid in self.data.univariate_attempt_ids]
 
     def _reports(self):
         return [StageReport.model_validate_json(self.state.evidence.path(path).read_text())
@@ -157,6 +177,7 @@ class Workflow:
         result["issues"] = result["issues"][:20]
         result["limitations"] = result["limitations"][:20]
         result["descriptive_summaries"] = result["descriptive_summaries"][:20]
+        result["univariate_results"] = result["univariate_results"][:20]
         return result
 
     def context(self):
@@ -166,6 +187,9 @@ class Workflow:
                       if self.data.univariate_plan_id else {})
         return {"protocol": "staged_v1", "stage": self.stage, "revision": self.data.revision,
                 "descriptive_version": self.state.run_info.get("descriptive_version", 0),
+                "univariate_version": self.state.run_info.get("univariate_version", 0),
+                "univariate_diagnostic_id": self.data.univariate_diagnostic_id,
+                "univariate_results": self.univariate_descriptors()[:20],
                 "descriptive_summaries": self.summary_descriptors()[:20],
                 "descriptive_summary_count": len(self.data.summary_ids),
                 "study": self.state.config.model_dump(exclude={"data_path", "metadata_path"}),
@@ -231,10 +255,16 @@ class Workflow:
             raise ValueError("The statistical plan must use the current prepared dataset.")
         if self.data.univariate_plan_id:
             raise ValueError("Request a univariate revision before replacing its plan.")
+        if self.state.run_info.get("univariate_version"):
+            if not self.data.univariate_diagnostic_id or plan.diagnostic_id != self.data.univariate_diagnostic_id:
+                raise ValueError("Inspect the current univariate inputs and reference that diagnostic ID before planning.")
+            diagnostic = self.state.univariate_diagnostics[plan.diagnostic_id]
+            if diagnostic["dataset_id"] != plan.dataset_id:
+                raise ValueError("The univariate diagnostic belongs to another prepared dataset.")
         paired = plan.test in {"paired_t", "wilcoxon"}
         if paired != (self.state.config.design == "paired"):
             raise ValueError("The statistical test must match the declared pairing design.")
-        if self.state.comparisons:
+        if self.state.comparisons or any(item.get("tests_executed", 0) for item in self.state.univariate_attempts.values()):
             plan = plan.model_copy(update={"purpose": "exploratory"})
         self.data.univariate_plan_id = self._register_plan("u", plan, self.state.univariate_plans)
         return {"plan_id": self.data.univariate_plan_id, "plan": plan.model_dump()}
@@ -293,6 +323,11 @@ class Workflow:
             elif not any(self.state.comparisons[cid].get("univariate_plan_id") == data.univariate_plan_id
                          for cid in data.comparison_ids):
                 errors.append("The current statistical plan has not been tested.")
+            if self.state.run_info.get("univariate_version") and not any(
+                record["status"] == "completed" and record["plan_id"] == data.univariate_plan_id
+                and record["correction_completed"] for record in self.univariate_descriptors()
+            ):
+                errors.append("The current plan requires a complete univariate audit and multiplicity correction.")
         elif stage == STAGES[3]:
             if not data.figure_plan_id:
                 errors.append("Register a figure plan first.")
@@ -342,6 +377,7 @@ class Workflow:
             artifact_ids=self.current_artifacts(), aggregates=self.aggregates(), preparation=preparation,
             issues=self.issues(), limitations=self.limitations(),
             descriptive_summaries=self.summary_descriptors(),
+            univariate_results=self.univariate_descriptors(),
         )
         relative = f"stages/{self.stage}/{report.attempt_id}/handoff.json"
         self.state.write_json(relative, handoff.model_dump())
@@ -416,6 +452,8 @@ class Workflow:
             self.data.preparation_summary = {}
         if index <= 2:
             self.data.univariate_plan_id = None
+            self.data.univariate_diagnostic_id = None
+            self.data.univariate_attempt_ids = []
             self.data.comparison_ids = []
         self.data.figure_plan_id = None
         self.data.figure_ids = []

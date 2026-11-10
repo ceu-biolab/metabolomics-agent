@@ -238,6 +238,7 @@ def test_pre_d_runs_keep_their_capabilities_and_frozen_prompts(make_tools):
     tools = make_tools()
     state = tools.state
     state.run_info.pop("descriptive_version")
+    state.run_info.pop("univariate_version")
     state.run_info["workflow_prompts"]["02_preparation"] = "Frozen preparation instructions from an earlier run."
     state.write_json("run.json", state.run_info)
     assert "summarize_dataset" not in {schema["function"]["name"] for schema in tools.schemas()}

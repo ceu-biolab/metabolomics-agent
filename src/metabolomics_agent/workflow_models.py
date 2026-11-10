@@ -46,6 +46,13 @@ class UnivariatePlan(Model):
     purpose: Literal["primary", "exploratory"] = "primary"
 
 
+class UnivariatePlanV1(UnivariatePlan):
+    diagnostic_id: str
+    alternative: Literal["two-sided"] = "two-sided"
+    hypothesis_family: Literal["valid_features_in_comparison"] = "valid_features_in_comparison"
+    value_policy: Literal["including_imputed"] = "including_imputed"
+
+
 class FigureSpec(Model):
     kind: FigureKind
     source_id: str
@@ -107,6 +114,7 @@ class StageHandoff(Model):
     issues: list[StageIssue]
     limitations: list[str]
     descriptive_summaries: list[dict[str, Any]] = Field(default_factory=list)
+    univariate_results: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class WorkflowState(Model):
@@ -120,6 +128,8 @@ class WorkflowState(Model):
     summary_ids: list[str] = Field(default_factory=list)
     dataset_id: str | None = None
     univariate_plan_id: str | None = None
+    univariate_diagnostic_id: str | None = None
+    univariate_attempt_ids: list[str] = Field(default_factory=list)
     comparison_ids: list[str] = Field(default_factory=list)
     figure_plan_id: str | None = None
     figure_ids: list[str] = Field(default_factory=list)

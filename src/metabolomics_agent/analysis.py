@@ -235,6 +235,10 @@ def preprocess(state: RunState, plan_id: str):
 
 
 def compare_groups(state: RunState, dataset_id: str, plan_id: str | None = None):
+    if state.run_info.get("univariate_version"):
+        from .univariate import compare_groups as audited_compare_groups
+
+        return audited_compare_groups(state, dataset_id, plan_id)
     dataset = state.dataset(dataset_id)
     cfg, meta = state.config, state.metadata
     plan = state.univariate_plans[plan_id] if plan_id else state.plans[dataset.plan_id]

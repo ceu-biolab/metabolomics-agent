@@ -53,7 +53,9 @@ def finish_analysis(state: RunState, args: FinishArgs):
         for row in result["top_features"]:
             name = row["feature"].replace("|", "\\|").replace("\n", " ")
             fc = "undefined" if row["log2_fold_change"] is None else f"{row['log2_fold_change']:.4g}"
-            lines.append(f"| {name} | {fc} | {row['p_value']:.4g} | {row['adjusted_p_value']:.4g} |")
+            p_value = "undefined" if row["p_value"] is None else f"{row['p_value']:.4g}"
+            adjusted = "undefined" if row["adjusted_p_value"] is None else f"{row['adjusted_p_value']:.4g}"
+            lines.append(f"| {name} | {fc} | {p_value} | {adjusted} |")
         lines += ["", "Feature-wise confidence intervals are unadjusted. Statistical significance "
                   "does not by itself establish biological relevance.", ""]
     if state.workflow and state.workflow.data.summary_ids:
@@ -69,6 +71,19 @@ def finish_analysis(state: RunState, args: FinishArgs):
                       f"{summary['grouping']}, {summary['value_policy']}. "
                       f"[Statistics]({table}); [undefined reasons]({reasons}); "
                       f"[methods and metadata]({sid}_summary.json)."]
+    if state.workflow and state.workflow.data.univariate_attempt_ids:
+        lines += ["", "## Univariate audit", "",
+                  "Audit tables distinguish observed measurements, imputed values, used samples, "
+                  "and complete pairs. The issue tables explain skipped tests and undefined effects "
+                  "or intervals. Uncorrected tables are checkpoints, not discovery results.", ""]
+        for uid in state.workflow.data.univariate_attempt_ids:
+            attempt = state.univariate_attempts[uid]
+            audit = state.artifacts[attempt["artifacts"]["audit"]]["path"]
+            issues = state.artifacts[attempt["artifacts"]["issues"]]["path"]
+            raw = state.artifacts[attempt["artifacts"]["raw_tests"]]["path"]
+            lines += [f"- **{uid} ({attempt['status']})**: [audit]({audit}), "
+                      f"[issues]({issues}), [uncorrected checkpoint]({raw}), "
+                      f"[methods and correction family]({uid}_univariate.json)."]
     lines += ["## Analysis decisions", ""]
     plans = state.preprocessing_plans if state.workflow else state.plans
     for pid, plan in plans.items():

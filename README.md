@@ -51,8 +51,9 @@ committed checkpoints; reopening evidence marks unfinished attempts as interrupt
 Each completed stage also saves a validated `handoff.json` with aggregate context,
 current evidence IDs, decisions, and relevant issues for the next stage. English
 stage prompts and tool permissions are active; full individual sample tables stay
-local. See [delivery D](docs/staged-workflow/delivery-D.md) for the current
-descriptive capabilities and verification results.
+local. See [delivery E](docs/staged-workflow/delivery-E.md) for the current
+univariate audit capabilities and verification results, and
+[delivery D](docs/staged-workflow/delivery-D.md) for descriptive statistics.
 
 The command prints its output directory. Open `report.md` there; it links to the
 numerical tables and embeds PNG figures. An existing run directory is never
@@ -190,7 +191,8 @@ are counted and recorded as excluded. The direction of all signed effects is
 | `summarize_dataset` | Group-wise or overall statistics on original/concentration/test scales, observed/imputed counts, quantiles, shape, CV, optional mode, and explicit undefined reasons |
 | `set_preprocessing_plan` | Preparation choices after inspection, independent of the statistical plan |
 | `preprocess` | Missingness/constant filtering; none/median/half-minimum/kNN imputation; optional median normalization; optional log2/log10 transformation |
-| `set_univariate_plan` | Statistical test, correction, and purpose for the current dataset |
+| `inspect_univariate` | Prepared-data eligibility, observed/imputed counts, paired differences, normality diagnostics, and ties before selecting a test |
+| `set_univariate_plan` | Diagnostic ID, statistical test, correction, hypothesis family, value policy, and purpose for the current dataset |
 | `compare_groups` | Welch, pooled t, Mann–Whitney U, paired t, or Wilcoxon; BH, Holm–Šidák, Holm, or Bonferroni correction |
 | `set_figure_plan` | Figures with current sources and explicit feature selection |
 | `make_plot` | Before/after distributions, boxplots, adjusted-p volcano; diagnostic-only restrictions during preparation |
@@ -243,6 +245,21 @@ missingness, imputed values, used observations, and excluded imputations. For
 prepared data, zeros explicitly reclassified as missing count as missing inputs;
 the original summary preserves them as measured values. Full sample tables and
 masks cannot be read by the model through `read_result`.
+
+New runs require `inspect_univariate` before the statistical plan. Eligibility
+requires at least three original observations per group and, for paired designs,
+three originally observed complete pairs; imputations cannot supply these minima.
+The diagnostic records prepared-value and observed-origin normality separately
+and does not automatically select a test.
+
+Each attempt saves uncorrected results before correction, a provenance/sample-count
+audit, per-feature issues, and `uaNNN_univariate.json` with methods and correction
+family. Skipped features remain in the tables. Audit `n_test_*` counts are zero
+when no test is executed; historical result counts describe prepared candidates.
+A finite statistic and a finite p-value in [0,1] are required for correction.
+No valid tests or a failed correction block completion while preserving evidence.
+Any executed tests require an exploratory plan for subsequent comparisons, even
+if correction failed. Existing runs retain their saved protocol and prompts.
 
 Tests are two-sided. Welch/pooled t analyses include signed Hedges' g and
 feature-wise confidence intervals for mean differences on the test scale.

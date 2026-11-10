@@ -12,7 +12,7 @@ from .evidence import EvidenceStore, digest
 from .models import AnalysisPlan, StudyConfig
 from .serialization import clean_json as clean_json, dumps as dumps
 from .workflow import Workflow
-from .workflow_models import FigurePlan, PreprocessingPlan, UnivariatePlan, WorkflowPlan
+from .workflow_models import FigurePlan, PreprocessingPlan, UnivariatePlan, UnivariatePlanV1, WorkflowPlan
 
 
 @dataclass
@@ -44,15 +44,22 @@ class RunState:
         self.seed = self.run_info["seed"]
         self.protocol = self.run_info.get("protocol", "legacy")
         self.descriptive_summaries = saved.get("descriptive_summaries", {})
+        self.univariate_diagnostics = saved.get("univariate_diagnostics", {})
+        self.univariate_attempts = saved.get("univariate_attempts", {})
         if self.run_info.get("descriptive_version", 0) not in {0, 1}:
             raise ValueError("Unsupported descriptive workflow version.")
+        if self.run_info.get("univariate_version", 0) not in {0, 1}:
+            raise ValueError("Unsupported univariate workflow version.")
+        if self.run_info.get("univariate_version") and not self.run_info.get("descriptive_version"):
+            raise ValueError("Audited inference requires saved observed/imputed provenance.")
         if self.protocol not in {"legacy", "staged_v1"}:
             raise ValueError("Unsupported workflow protocol; cannot migrate a saved run implicitly.")
         if self.protocol == "staged_v1" and not saved.get("workflow"):
             raise ValueError("Missing staged workflow state.")
         self.plans = {pid: AnalysisPlan.model_validate(p) for pid, p in saved["plans"].items()}
         for attribute, model in [("workflow_plans", WorkflowPlan), ("preprocessing_plans", PreprocessingPlan),
-                                 ("univariate_plans", UnivariatePlan), ("figure_plans", FigurePlan)]:
+                                 ("univariate_plans", UnivariatePlanV1 if self.run_info.get("univariate_version") else UnivariatePlan),
+                                 ("figure_plans", FigurePlan)]:
             setattr(self, attribute, {pid: model.model_validate(plan)
                                      for pid, plan in saved.get(attribute, {}).items()})
         self.artifacts = saved["artifacts"]
@@ -116,6 +123,8 @@ class RunState:
         self.univariate_plans = {}
         self.figure_plans = {}
         self.descriptive_summaries = {}
+        self.univariate_diagnostics = {}
+        self.univariate_attempts = {}
         self.output_dir = output_dir.resolve()
         # A run directory is immutable across runs. Never overwrite prior evidence.
         self.output_dir.mkdir(parents=True, exist_ok=False)
@@ -132,6 +141,7 @@ class RunState:
         self.run_info = {
             "protocol": protocol,
             "descriptive_version": 1 if protocol == "staged_v1" else 0,
+            "univariate_version": 1 if protocol == "staged_v1" else 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "study": config.model_dump(), "seed": seed, "python": platform.python_version(),
             "inputs": [],
@@ -231,6 +241,8 @@ class RunState:
             "univariate_plans": {key: value.model_dump() for key, value in self.univariate_plans.items()},
             "figure_plans": {key: value.model_dump() for key, value in self.figure_plans.items()},
             "descriptive_summaries": self.descriptive_summaries,
+            "univariate_diagnostics": self.univariate_diagnostics,
+            "univariate_attempts": self.univariate_attempts,
             "status": self.status, "finished": self.finished, "inspected": self.inspected,
             "plans": {k: v.model_dump() for k, v in self.plans.items()},
             "datasets": {k: {"plan_id": d.plan_id, "artifact_ids": d.artifact_ids,

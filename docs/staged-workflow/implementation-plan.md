@@ -1,8 +1,9 @@
 # Plan actualizado: flujo por etapas con evidencias e informes
 
-Este documento describe el plan acordado. A–D están completadas; E–G siguen
+Este documento describe el plan acordado. A–E están completadas; F–G siguen
 pendientes. Los detalles están en [delivery-B.md](delivery-B.md) y
-[delivery-C.md](delivery-C.md) y [delivery-D.md](delivery-D.md). Los prompts de `prompts/` son los textos aprobados;
+[delivery-C.md](delivery-C.md), [delivery-D.md](delivery-D.md) y
+[delivery-E.md](delivery-E.md). Los prompts de `prompts/` son los textos aprobados;
 C instala sus copias en el paquete y activa las instrucciones por etapa. La
 evaluación y refinamiento previstos en G siguen pendientes.
 
@@ -224,7 +225,7 @@ ejecutará en el nuevo flujo. Tampoco se generará la representación PCA por de
 |---|---|---|
 | Coordinación | `read_result` cuando haya evidencias | `get_workflow_state`, `set_workflow_plan` |
 | Preparación | `inspect_dataset`, `preprocess`, `read_result`, `make_plot` restringido a diagnóstico | `set_preprocessing_plan`, `summarize_dataset` |
-| Univariante | `compare_groups`, `read_result` | `set_univariate_plan` |
+| Univariante | `compare_groups`, `read_result` | `inspect_univariate`, `set_univariate_plan` |
 | Visualización | `make_plot`, `read_result` | `set_figure_plan` |
 | Informe | `read_result`, `finish_analysis` adaptado | `validate_workflow` |
 
@@ -256,7 +257,9 @@ no es aplicable al objetivo, su ausencia se justifica sin invalidar todo el fluj
 
 Los prompts describen el contrato de destino. C implementa las herramientas de
 coordinación, planes y traspasos; D incorpora `summarize_dataset` y la procedencia
-observada/imputada. Las ampliaciones pendientes de E–F aún no están disponibles. El catálogo dinámico es la autoridad
+observada/imputada. E incorpora el diagnóstico univariante, checkpoints de pruebas,
+auditoría e incidencias. Las ampliaciones de figuras de F siguen pendientes.
+El catálogo dinámico es la autoridad
 de capacidades en cada ejecución.
 
 ## 7. Cambios en el código
@@ -315,6 +318,6 @@ catálogo nuevo y de sus requisitos, pruebas y demo operativa.
   de un LLM real. Solo esta última requiere proveedor/modelo y credenciales.
 
 El entorno y la referencia de A están preparados. La persistencia de B, la
-coordinación de C y los descriptivos de D están implementados y verificados. Las cinco etapas y sus
-prompts están activos en nuevas ejecuciones; E–G conservan el trabajo pendiente
-descrito anteriormente.
+coordinación de C, los descriptivos de D y la auditoría univariante de E están
+implementados y verificados. Las cinco etapas y sus prompts están activos en
+nuevas ejecuciones; F y G conservan el trabajo pendiente descrito anteriormente.

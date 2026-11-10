@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from . import analysis
 from .descriptive import summarize_dataset
+from .univariate import inspect_univariate
 from .models import (AnalysisPlan, DatasetArgs, FinishArgs, InspectArgs, PCAArgs,
                      PlotArgs, PrepareArgs, ReadResultArgs)
 from .plots import make_plot
@@ -16,7 +17,7 @@ from .state import RunState, clean_json
 from .workflow import COMMON_TOOLS, STAGES, STAGE_TOOLS
 from .workflow_models import (CompareArgs, FigurePlan, FigureSpec, PreprocessingPlan,
                               ReadStageArgs, RevisionArgs, StageAssessment,
-                              SummaryArgs, UnivariatePlan, WorkflowPlan)
+                              SummaryArgs, UnivariatePlan, UnivariatePlanV1, WorkflowPlan)
 
 
 TOOL_DEFINITIONS = {
@@ -50,7 +51,8 @@ STAGED_DEFINITIONS = {
     "set_workflow_plan": (WorkflowPlan, "Register the objective, descriptive/two-group scope, and required figures."),
     "set_preprocessing_plan": (PreprocessingPlan, "After inspection, record filtering, imputation, normalization, and transformation choices."),
     "preprocess": (PrepareArgs, "Execute the current preparation plan, saving local checkpoints and separate concentration/test scales. No PCA representation is generated."),
-    "set_univariate_plan": (UnivariatePlan, "Record a test and correction for the current dataset before testing. Revisions after testing are exploratory."),
+    "inspect_univariate": (DatasetArgs, "Inspect current test-scale counts, observed/imputed origins, complete pairs and normality diagnostics. Returns aggregate artifacts; does not execute group-comparison tests."),
+    "set_univariate_plan": (UnivariatePlanV1, "After inspecting univariate inputs, register the diagnostic ID, test, two-sided alternative, including-imputed policy and within-comparison correction family. Later data-informed analyses are exploratory."),
     "compare_groups": (CompareArgs, "Execute the current univariate plan and save the full comparison table."),
     "set_figure_plan": (FigurePlan, "Register current sources and the figures required to answer the objective."),
     "make_plot": (FigureSpec, "Create a supported figure. Preparation allows diagnostic distributions/boxplots; visualization requires a registered figure plan."),
@@ -76,6 +78,8 @@ class ToolRegistry:
             for name, (model, description) in STAGED_DEFINITIONS.items():
                 if name not in allowed:
                     continue
+                if name == "set_univariate_plan" and self.state and not self.state.run_info.get("univariate_version"):
+                    model = UnivariatePlan
                 parameters = model.model_json_schema()
                 if name == "make_plot" and stage == STAGES[1]:
                     parameters["properties"]["kind"]["enum"] = ["distributions", "boxplot"]
@@ -181,7 +185,10 @@ class ToolRegistry:
                 if len(arguments) > 32000:
                     raise ValueError("Tool arguments exceed 32000 characters.")
                 arguments = json.loads(arguments)
-            parsed = STAGED_DEFINITIONS[name][0].model_validate(arguments)
+            model = STAGED_DEFINITIONS[name][0]
+            if name == "set_univariate_plan" and not state.run_info.get("univariate_version"):
+                model = UnivariatePlan
+            parsed = model.model_validate(arguments)
             state.event("tool_call", tool=name, stage=workflow.stage, arguments=parsed.model_dump())
             state.evidence._journal("tool_started", tool=name, arguments=parsed.model_dump())
             with warnings.catch_warnings(record=True) as captured:
@@ -214,6 +221,13 @@ class ToolRegistry:
                     workflow.data.preparation_summary = result
                 elif name == "set_univariate_plan":
                     result = workflow.set_univariate_plan(parsed)
+                elif name == "inspect_univariate":
+                    if parsed.dataset_id != workflow.data.dataset_id:
+                        raise ValueError("Inspect the current prepared dataset.")
+                    if workflow.data.univariate_plan_id:
+                        raise ValueError("Request a revision before replacing diagnostics after planning.")
+                    result = inspect_univariate(state, parsed.dataset_id)
+                    workflow.data.univariate_diagnostic_id = result["diagnostic_id"]
                 elif name == "compare_groups":
                     if (parsed.dataset_id != workflow.data.dataset_id or
                             parsed.plan_id != workflow.data.univariate_plan_id):
