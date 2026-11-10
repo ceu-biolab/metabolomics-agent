@@ -283,7 +283,8 @@ class DemoProvider(LegacyDemoProvider):
         if self.step < len(steps):
             name, arguments = steps[self.step]
         else:
-            comparison = next((value for value in values if value.get("comparison_id") == "c001"), None)
+            comparison = next((value for value in context.get("current_comparisons", [])
+                               if value["comparison_id"] == "c001"), None)
             text = ("Exploratory PCA was fitted to the retained prepared features without group labels."
                     if pca_only else f"The analysis tested {comparison['features_tested']} features; "
                     f"{comparison['significant_features']} had BH-adjusted p < 0.05.")

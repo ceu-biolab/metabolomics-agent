@@ -38,6 +38,12 @@ class RunState:
         if saved.get("schema_version", 1) >= 2 and not (self.output_dir / "evidence_index.json").is_file():
             raise ValueError("Missing evidence index for this run state version.")
         self.run_info = json.loads((self.output_dir / "run.json").read_text())
+        strategy = self.run_info.get("context_strategy", "full_history")
+        if strategy not in {"full_history", "phase_window_v1"}:
+            raise ValueError("Unsupported saved context strategy.")
+        self.context_window = saved.get("context_window")
+        if strategy == "phase_window_v1" and not isinstance(self.context_window, dict):
+            raise ValueError("A phase-window run is missing its saved context position.")
         if saved["finished"]:
             raise ValueError("A complete run cannot be resumed.")
         self.evidence = EvidenceStore(self.output_dir, recover=True)
@@ -127,6 +133,7 @@ class RunState:
         self.seed = seed
         self.protocol = protocol
         self.workflow = None
+        self.context_window = None
         self.workflow_plans = {}
         self.preprocessing_plans = {}
         self.univariate_plans = {}
@@ -153,6 +160,7 @@ class RunState:
         self.events = 0
         self.run_info = {
             "protocol": protocol,
+            "context_strategy": "phase_window_v1" if protocol == "staged_v1" else "full_history",
             "descriptive_version": 1 if protocol == "staged_v1" else 0,
             "univariate_version": 1 if protocol == "staged_v1" else 0,
             "visualization_version": 2 if protocol == "staged_v1" else 0,
@@ -180,6 +188,8 @@ class RunState:
             self.write_json("run.json", self.run_info)
         if protocol == "staged_v1":
             self.workflow = Workflow(self)
+            self.context_window = {"phase": self.workflow.context_phase(),
+                                   "start_index": 2, "epoch": 1}
             self.write_json("run.json", self.run_info)
         self.snapshot()
 
@@ -252,6 +262,7 @@ class RunState:
         self.write_json("state.json", {
             "schema_version": 3 if workflow else 2,
             "workflow": workflow,
+            "context_window": self.context_window,
             "workflow_plans": {key: value.model_dump() for key, value in self.workflow_plans.items()},
             "preprocessing_plans": {key: value.model_dump() for key, value in self.preprocessing_plans.items()},
             "univariate_plans": {key: value.model_dump() for key, value in self.univariate_plans.items()},

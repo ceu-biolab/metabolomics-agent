@@ -1,11 +1,12 @@
 # Plan actualizado: flujo por etapas con evidencias e informes
 
-Este documento describe el plan acordado. A–F están completadas; G sigue
-pendiente. Los detalles están en [delivery-B.md](delivery-B.md) y
+Este documento describe el plan acordado. A–F y la parte offline de G están
+completadas. La evaluación con un LLM real sigue pendiente. Los detalles están en [delivery-B.md](delivery-B.md) y
 [delivery-C.md](delivery-C.md), [delivery-D.md](delivery-D.md) y
 [delivery-E.md](delivery-E.md) y [delivery-F.md](delivery-F.md). Los prompts de `prompts/` son los textos aprobados;
 C instala sus copias en el paquete y activa las instrucciones por etapa. La
-evaluación y refinamiento previstos en G siguen pendientes. La ampliación
+evaluación offline y el refinamiento de G están documentados en
+[delivery-G.md](delivery-G.md); la evaluación con un LLM real no se ha ejecutado. La ampliación
 posterior de heatmaps y PCA se describe en [pca-heatmap-extension.md](pca-heatmap-extension.md).
 
 ## 1. Alcance y decisiones
@@ -326,5 +327,6 @@ utiliza contratos, persistencia y requisitos propios; su activación es explíci
 El entorno y la referencia de A están preparados. La persistencia de B, la
 coordinación de C, los descriptivos de D, la auditoría univariante de E y las
 figuras e informes de F están implementados y verificados. Las cinco etapas y
-sus prompts están activos en nuevas ejecuciones; G conserva el trabajo pendiente
-descrito anteriormente.
+sus prompts están activos en nuevas ejecuciones. G dispone de una suite offline
+reproducible y auditorías de ejecuciones; queda pendiente la evaluación del
+razonamiento de un LLM real, preparada por separado.

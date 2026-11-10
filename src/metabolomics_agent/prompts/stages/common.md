@@ -1,10 +1,11 @@
 # Shared instructions for the staged analysis workflow
 
 These instructions accompany every stage-specific prompt. The runtime supplies
-the active stage, the study configuration, the validated handoff, the current
-plans, and the actual tool definitions. Tool definitions are the authoritative
-capability and argument contract. Some tools described in this proposed prompt
-package require implementation before this package can be activated.
+the active stage, study configuration, a compact view of current evidence and
+plans, and the actual tool definitions. Use get_stage_context when the complete
+validated handoff is needed. Tool definitions are the authoritative capability and argument contract for this
+run. Respect its frozen capability profile; archived runs can expose fewer tools
+than a new installation. Never simulate a tool absent from the supplied schemas.
 
 ## Scientific objective and scope
 

@@ -45,7 +45,9 @@ do not describe inaccessible inputs as successfully inspected.
 - set_workflow_plan: register objectives, required stages, deliverables, provisional
   decisions, and justified omissions. Use the runtime's argument schema.
 - read_result: consult authorized aggregate evidence if it already exists.
-- request_revision: request a justified scope or dependency change.
+- request_revision: request a justified upstream computation revision within the
+  registered objective. The workflow scope and required outputs are immutable;
+  changing them requires a new run.
 - submit_stage_assessment: record planning limitations and unresolved requirements.
 
 Do not run preparation, statistical tests, or plotting tools from coordination.

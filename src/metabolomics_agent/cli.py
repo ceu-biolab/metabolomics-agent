@@ -63,11 +63,35 @@ def main(argv=None):
     benchmark = commands.add_parser("reference-check", help="Check selected published GitBook numbers, without an LLM")
     benchmark.add_argument("--dataset", type=Path, required=True)
     benchmark.add_argument("--output", type=Path)
+    evaluation = commands.add_parser("evaluate-offline", help="Run deterministic local evaluation cases; no key or live model")
+    evaluation.add_argument("--output", type=Path)
+    evaluation.add_argument("--seed", type=int, default=42)
+    from .evaluation_cases import CASES
+    evaluation.add_argument("--case", action="append", choices=[case.name for case in CASES], dest="cases")
+    audit = commands.add_parser("audit-run", help="Audit saved staged evidence without changing the run or calling a model")
+    audit.add_argument("--run", type=Path, required=True)
+    audit.add_argument("--output", type=Path)
     schemas = commands.add_parser("tool-schemas", help="Print staged function schemas (coordination by default)")
     schemas.add_argument("--stage", choices=STAGES, default=STAGES[0])
     schemas.add_argument("--analysis-block", choices=["univariate", "pca"], default="univariate")
     args = parser.parse_args(argv)
     try:
+        if args.command in {"evaluate-offline", "audit-run"}:
+            from .evaluation import evaluate_offline, save_audit
+            if args.command == "evaluate-offline":
+                output = args.output or default_output("offline-evaluation")
+                report = evaluate_offline(output, cases=args.cases, seed=args.seed)
+                print(dumps({"status": report["status"], "output_dir": output,
+                             "cases_passed": report["cases_passed"], "cases": len(report["cases"]),
+                             "numeric_values_checked": report["numeric_values_checked"],
+                             "live_model_evaluation": "not_run", "api_calls": 0}))
+            else:
+                output = args.output or default_output("audit")
+                report = save_audit(args.run, output)
+                print(dumps({"status": report["status"], "output_dir": output,
+                             "analysis_status": report.get("analysis_status"),
+                             "checks_failed": report["checks_failed"], "live_llm_decisions": "not_assessed"}))
+            return 0 if report["status"] == "passed" else 2 if report["status"] == "incomplete" else 1
         if args.command == "make-example":
             print(generate_example(args.output))
             return 0

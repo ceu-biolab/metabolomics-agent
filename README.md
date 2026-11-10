@@ -74,6 +74,36 @@ The command prints its output directory. Open `report.md` there; it links to the
 numerical tables and embeds PNG figures. An existing run directory is never
 overwritten. To choose a path, use `demo --output runs/my-demo`.
 
+## Offline evaluation and saved-run audits
+
+```bash
+python -m metabolomics_agent evaluate-offline --output runs/evaluation-G
+python -m metabolomics_agent audit-run --run runs/evaluation-G/cases/paired/run --output runs/audit-paired
+```
+
+The evaluation runs ten deterministic cases covering independent/paired designs,
+descriptive/PCA scopes, no discoveries, resumption, rejected calls, and an unsafe
+logarithm. Use repeatable `--case` options and `--seed` to select cases. A resume
+case also runs its uninterrupted reference. Existing output directories are never
+overwritten. Neither command loads `.env` or constructs a live provider, and no
+`LLM_API_KEY` is required.
+
+`evaluation.json`/`.md` separate case outcomes from analysis completion. The
+controlled unsafe-log case must remain incomplete with preserved checkpoints;
+it can pass its evaluation without completing its scientific analysis. `audit-run`
+reads evidence without modifying/restoring it and saves separate reports. Exit
+codes are 0 (checks passed), 1 (failed), or 2 (a coherent but incomplete analysis).
+
+Audits verify frozen prompts/tool scopes, schemas, integrity, stage handoffs,
+identifier screening, numerical references and plotting data. For phase-window
+runs, they also reconstruct each saved request from the full local conversation,
+check phase cursors and user clarifications, and report request payload sizes in
+bytes. Older staged runs without phase windows remain auditable. They evaluate
+recorded execution, **not an LLM's scientific reasoning**. The generated
+`live_evaluation_manifest.json` prepares tasks and a human-review rubric with
+model/budgets unset and all model-quality criteria unassessed. No live evaluation
+is launched. See [delivery G](docs/staged-workflow/delivery-G.md) for coverage and limits.
+
 ## Connect an LLM
 
 ```bash
@@ -140,10 +170,9 @@ Configuration options are documented in `.env.example`. In particular:
   limits stop runaway loops. Run time is checked between requests/tools; a running
   numerical operation is not forcibly interrupted.
 - Aggregate tokens include input and output. A conservative UTF-8 byte estimate
-  checks the first request against the remaining allowance. Later estimates anchor
-  to the provider's actual prompt count and add a conservative byte allowance for
-  new messages. Provider usage is used afterward; providers without usage reports
-  are charged the conservative estimate.
+  checks staged requests against the remaining allowance. Legacy requests can
+  anchor later estimates to the provider's actual prompt count. Provider usage
+  is used afterward; providers without usage reports are charged the conservative estimate.
   This may stop a run early. These are token controls, not an exact currency budget.
 - Requests have no automatic SDK retries. A failed request preserves the partial
   run, and the CLI returns nonzero. An incomplete analysis never produces a report
@@ -151,7 +180,9 @@ Configuration options are documented in `.env.example`. In particular:
 
 Individual sample tables remain local. The API receives the user's objective,
 study metadata, feature names, aggregate diagnostics, selected result rows, and
-the conversation. Local traces contain these messages and all numerical snapshots.
+the current phase's tool conversation. The original request and subsequent user
+clarifications remain visible across phases. Local traces retain the complete
+conversation and all numerical snapshots.
 
 ## Input contract
 
@@ -228,7 +259,11 @@ python -m metabolomics_agent tool-schemas --stage 03_univariate --analysis-block
 The current prompts are in `src/metabolomics_agent/prompts/stages/`. Each request
 uses the shared English instructions plus the active stage's prompt and tools.
 The bundle is frozen in run metadata; exact request messages and tools are saved
-under `requests/`. Runtime checks reject out-of-stage tools, mismatched pairing,
+under `requests/`. New staged runs send a compact current-evidence context and
+only the current stage or PCA/univariate block's tool messages. A versioned
+conversation cursor is saved in `state.json`; the full local `conversation.json`
+is never pruned. Detailed handoffs remain available through `get_stage_context`.
+Runtime checks reject out-of-stage tools, mismatched pairing,
 unsafe log inputs, superseded sources, unregistered figures, and duplicate execution
 of a statistical plan. PCA tools are offered only in the requested PCA block;
 univariate tools become available after its assessment. Other multivariate tools
@@ -355,7 +390,8 @@ python -m metabolomics_agent resume --run runs/your-run \
 ```
 
 Resume restores numerical snapshots, stage position, frozen prompts, and the
-original conversation without repeating completed calls. It requires the same
+original conversation without repeating completed calls. New staged runs also
+restore their phase window and replay all saved user clarifications. It requires the same
 model, endpoint, and API format. Old runs retain their legacy protocol and are
 not silently migrated. The legacy library protocol (`RunState(..., protocol="legacy")`)
 is retained for historical verification; new CLI and default library runs use `staged_v1`.
@@ -395,7 +431,9 @@ Tests cover numerical agreement with SciPy/statsmodels, effect direction,
 correction families, separate scales, paired alignment, missing-data restrictions,
 adaptive revisions, invalid tool calls, completeness checks, spending/turn limits,
 an end-to-end offline run, and the actual SDK protocol through a mocked HTTP
-transport. No test makes a paid API call.
+transport. G also checks the offline evaluation, read-only audits, deliberate
+corruption and numerical inconsistencies, and pending tool batches. No test makes
+a paid API call.
 
 ## Source layout
 
@@ -415,6 +453,9 @@ src/metabolomics_agent/
   report.py         computed report and evidence-linked interpretation
   cli.py            command-line entry point
   benchmark.py      selected exact GitBook reference checks
+  evaluation.py     offline suite, reports and pending live-review protocol
+  evaluation_cases.py deterministic datasets and scripted stimuli
+  run_audit.py      read-only integrity, trace and numerical checks
   workflow.py       stage contracts, transitions, revisions, and handoffs
   workflow_models.py independent workflow/preparation/statistical/figure plans
   descriptive.py    statistics by group/scale with observed/imputed provenance

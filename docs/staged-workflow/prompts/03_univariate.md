@@ -98,6 +98,9 @@ when a completed corrected comparison was never produced.
 
 Do not rerun the same dataset to seek a smaller p-value. A sensitivity analysis
 added after viewing results is exploratory and does not independently confirm findings.
+If earlier PCA exploration informed the comparison hypothesis or feature choices,
+state that adaptation and use an exploratory purpose; PCA does not independently
+confirm the univariate results.
 
 ## Issues, outputs, and completion
 

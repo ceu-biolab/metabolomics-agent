@@ -44,6 +44,11 @@ class Workflow:
     def stage(self):
         return self.data.active_stage
 
+    def context_phase(self):
+        """A revision or PCA/univariate block change starts a new model window."""
+        block = "pca" if self.in_pca_block() else "univariate"
+        return f"{self.data.revision}:{self.stage}:{block}"
+
     def pca_requirement(self):
         scope = self.state.workflow_plans.get(self.data.plan_id)
         return getattr(scope, "pca_requirement", "disabled") if self.state.run_info.get("pca_version") else "disabled"
@@ -240,7 +245,7 @@ class Workflow:
         result["plot_results"] = result["plot_results"][:12]
         return result
 
-    def context(self):
+    def context(self, *, include_handoff=True):
         preparation = (self.state.preprocessing_plans[self.data.preprocessing_plan_id].model_dump()
                        if self.data.preprocessing_plan_id else {})
         univariate = (self.state.univariate_plans[self.data.univariate_plan_id].model_dump()
@@ -272,8 +277,30 @@ class Workflow:
                 "preparation": preparation, "univariate": univariate,
                 "issues": [issue.model_dump() for issue in self.issues()][:20],
                 "issue_count": len(self.issues()), "limitations": self.limitations()[:20],
-                "incoming_handoff": self._incoming_handoff(),
+                "incoming_handoff": self._incoming_handoff() if include_handoff else None,
                 "allowed_tools": sorted(self.allowed_tools())}
+
+    def model_context(self):
+        """Current evidence for each request; full handoffs remain available by tool."""
+        context = self.context(include_handoff=False)
+        for duplicate in ("incoming_handoff", "study", "objective", "allowed_tools",
+                          "completed_stages"):
+            context.pop(duplicate)
+        issues = self.issues()
+        blocking = [issue for issue in issues if issue.blocking and issue.resolution == "open"]
+        other_issues = [issue for issue in issues if not (issue.blocking and issue.resolution == "open")]
+        context["issues"] = [issue.model_dump() for issue in
+                             (blocking + other_issues)[:max(20, len(blocking))]]
+        context["current_comparisons"] = [
+            {key: self.state.comparisons[cid][key]
+             for key in ("comparison_id", "features_tested", "features_skipped",
+                         "significant_features", "test", "correction", "alpha", "purpose")}
+            for cid in self.data.comparison_ids
+        ]
+        if self.data.dataset_id:
+            context["current_dataset_artifacts"] = self.state.datasets[
+                self.data.dataset_id].artifact_ids
+        return context
 
     def activate(self):
         if self._attempt is not None or self.state.finished:
