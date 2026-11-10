@@ -40,6 +40,14 @@ adds an explicitly exploratory rank-based sensitivity analysis.
 The demo verifies the machinery. It does not evaluate a real model's reasoning.
 The synthetic ground truth is not provided to the agent.
 
+Local evidence persistence now records tool attempts under `stages/`, with JSON
+and Markdown reports, operation logs, typed intermediate preprocessing tables,
+imputation masks, and SHA-256 manifests. Failed operations preserve their last
+committed checkpoints; reopening evidence marks unfinished attempts as interrupted.
+This is the persistence layer for the planned staged workflow; stage routing and
+the new prompts are not active yet. See [delivery B](docs/staged-workflow/delivery-B.md)
+for scope, recovery behavior, and verification results.
+
 The command prints its output directory. Open `report.md` there; it links to the
 numerical tables and embeds PNG figures. An existing run directory is never
 overwritten. To choose a path, use `demo --output runs/my-demo`.

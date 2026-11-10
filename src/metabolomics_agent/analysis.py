@@ -81,6 +81,9 @@ def set_plan(state: RunState, plan: AnalysisPlan):
     pid = f"p{len(state.plans) + 1:03d}"
     state.plans[pid] = plan
     state.write_json(f"{pid}_plan.json", plan.model_dump())
+    state.evidence.register_file(
+        f"{pid}_plan.json", "analysis_plan", plan_id=pid, parameters=plan.model_dump()
+    )
     return {"plan_id": pid, "plan": plan.model_dump(),
             "note": "Subsequent plans after testing are exploratory; earlier evidence remains saved."}
 
@@ -94,43 +97,93 @@ def preprocess(state: RunState, plan_id: str):
     plan = state.plans[plan_id]
     x = state.raw.copy()
     notes = []
+    evidence = state.evidence
+    last = None
+
+    def checkpoint(values, kind, scale="unlogged", *, advance=True):
+        nonlocal last
+        if evidence.active is None:
+            return None
+        artifact = evidence.table(
+            values.reset_index(), kind,
+            parent_ids=[last] if last else evidence.active.input_artifact_ids,
+            plan_id=plan_id, scale=scale, parameters=plan.model_dump(),
+            individual_samples=True,
+        )
+        if advance:
+            last = artifact.id
+        return artifact.id
+
+    with evidence.operation("selected_input", parameters={"plan_id": plan_id}):
+        checkpoint(x, "selected_input")
     if plan.zero_as_missing:
-        x = x.mask(x == 0)
-        notes.append("Zeros were explicitly treated as missing before filtering.")
-    missing = x.isna().mean()
-    keep = (missing <= plan.max_missing_fraction) & (x.nunique() > 1)
-    removed = [{"feature": f, "missing_fraction": missing[f],
-                "reason": "missingness" if missing[f] > plan.max_missing_fraction else "constant/all-missing"}
-               for f in x.columns[~keep]]
-    x = x.loc[:, keep]
-    if x.empty:
-        raise ValueError("No features remain after missingness and constant-feature filtering.")
+        with evidence.operation("zero_handling", inputs=[last] if last else []):
+            x = x.mask(x == 0)
+            checkpoint(x, "zeros_as_missing")
+            notes.append("Zeros were explicitly treated as missing before filtering.")
+    else:
+        evidence.skip("zero_handling", "Zeros retained according to the plan.")
+    with evidence.operation("filter", parameters={"max_missing_fraction": plan.max_missing_fraction},
+                            inputs=[last] if last else []):
+        missing = x.isna().mean()
+        keep = (missing <= plan.max_missing_fraction) & (x.nunique() > 1)
+        removed = [{"feature": f, "missing_fraction": missing[f],
+                    "reason": "missingness" if missing[f] > plan.max_missing_fraction else "constant/all-missing"}
+                   for f in x.columns[~keep]]
+        x = x.loc[:, keep]
+        checkpoint(x, "filtered")
+        if evidence.active is not None:
+            evidence.table(pd.DataFrame(removed, columns=["feature", "reason", "missing_fraction"]),
+                           "removed_features", parent_ids=[last], plan_id=plan_id)
+        if x.empty:
+            raise ValueError("No features remain after missingness and constant-feature filtering.")
     missing_count = int(x.isna().sum().sum())
-    if missing_count:
-        if plan.imputation == "median":
-            x = x.fillna(x.median())
-        elif plan.imputation == "half_min":
-            minimum = x.where(x > 0).min() / 2
-            if minimum.isna().any():
-                raise ValueError("Half-minimum imputation requires positive observations per feature.")
-            x = x.fillna(minimum)
-        elif plan.imputation == "knn":
-            x[:] = KNNImputer(n_neighbors=min(5, len(x) - 1)).fit_transform(x)
-        if plan.imputation != "none":
+    if missing_count and plan.imputation != "none":
+        with evidence.operation("impute", parameters={"method": plan.imputation},
+                                inputs=[last] if last else []):
+            missing_before = x.isna()
+            if plan.imputation == "median":
+                x = x.fillna(x.median())
+            elif plan.imputation == "half_min":
+                minimum = x.where(x > 0).min() / 2
+                if minimum.isna().any():
+                    raise ValueError("Half-minimum imputation requires positive observations per feature.")
+                x = x.fillna(minimum)
+            elif plan.imputation == "knn":
+                x[:] = KNNImputer(n_neighbors=min(5, len(x) - 1)).fit_transform(x)
+            checkpoint(missing_before & x.notna(), "imputation_mask", "boolean", advance=False)
+            checkpoint(x, "imputed")
             notes.append("Imputed values are included in tests; inference may depend on imputation. "
                          "Consider an exploratory sensitivity analysis.")
+            evidence.check("IMPUTATION_USED", 0, missing_count, passed=False,
+                           message="Imputation uncertainty is not propagated into inference.")
+    else:
+        evidence.skip("impute", "No missing values, or the plan explicitly disables imputation.")
     if plan.normalization == "median":
-        medians = x.median(axis=1)
-        if medians.isna().any() or (medians <= 0).any():
-            raise ValueError("Median normalization requires positive sample medians.")
-        x = x.div(medians, axis=0) * medians.median()
-        notes.append("Median normalization assumes broadly comparable sample-wide abundance.")
+        with evidence.operation("normalize", parameters={"method": plan.normalization},
+                                inputs=[last] if last else []):
+            medians = x.median(axis=1)
+            if medians.isna().any() or (medians <= 0).any():
+                raise ValueError("Median normalization requires positive sample medians.")
+            x = x.div(medians, axis=0) * medians.median()
+            checkpoint(x, "normalized")
+            notes.append("Median normalization assumes broadly comparable sample-wide abundance.")
+    else:
+        evidence.skip("normalize", "Normalization disabled in the plan.")
     testing = x.copy()
     if plan.transform != "none":
-        if (testing <= 0).any().any():
-            raise ValueError("Log transformation requires strictly positive values. "
-                             "Revise zero handling explicitly; no pseudocount is inserted.")
-        testing = np.log2(testing) if plan.transform == "log2" else np.log10(testing)
+        with evidence.operation("transform", parameters={"method": plan.transform},
+                                inputs=[last] if last else []):
+            positive = not (testing <= 0).any().any()
+            evidence.check("LOG_INPUT_POSITIVE", True, bool(positive), passed=positive,
+                           message="Logarithms require positive inputs.", severity="error")
+            if not positive:
+                raise ValueError("Log transformation requires strictly positive values. "
+                                 "Revise zero handling explicitly; no pseudocount is inserted.")
+            testing = np.log2(testing) if plan.transform == "log2" else np.log10(testing)
+            checkpoint(testing, "transformed", plan.transform)
+    else:
+        evidence.skip("transform", "Transformation disabled in the plan.")
     variance = testing.var(ddof=1)
     variable = (variance > 0) & variance.notna()
     if not variable.all():
@@ -145,8 +198,8 @@ def preprocess(state: RunState, plan_id: str):
     elif plan.pca_scaling == "pareto":
         pca_values = pca_values / np.sqrt(testing.std(ddof=1))
     did = f"d{len(state.datasets) + 1:03d}"
-    state.datasets[did] = Dataset(x, testing, pca_values, plan_id)
-    provenance = {"dataset_id": did, "plan_id": plan_id}
+    provenance = {"dataset_id": did, "plan_id": plan_id,
+                  "parent_ids": [last] if last else []}
     artifacts = {
         "concentrations": state.table(x.reset_index(), "concentrations", provenance),
         "testing": state.table(testing.reset_index(), "testing_values", provenance),
@@ -154,6 +207,10 @@ def preprocess(state: RunState, plan_id: str):
         "filtered_features": state.table(pd.DataFrame(removed, columns=["feature", "reason", "missing_fraction"]),
                                          "filtered_features", provenance),
     }
+    # Publish an executable dataset only after all its tables have been committed.
+    state.datasets[did] = Dataset(x, testing, pca_values, plan_id, artifacts)
+    evidence.check("PREPARED_DATASET", True, True, passed=True,
+                   message="All representations of the prepared dataset must be saved.")
     return {"dataset_id": did, "plan_id": plan_id, "samples": len(x),
             "features_retained": len(x.columns), "features_removed": len(removed),
             "missing_before_imputation": missing_count,

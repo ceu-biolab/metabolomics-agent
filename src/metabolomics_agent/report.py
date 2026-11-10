@@ -102,7 +102,7 @@ def finish_analysis(state: RunState, args: FinishArgs):
               "Methods source: [Idkowiak et al., Nature Communications (2025)]"
               "(https://doi.org/10.1038/s41467-025-63751-1). "
               "This run is not an exact GitBook reproduction unless explicitly configured as one.", ""]
-    (state.output_dir / "report.md").write_text("\n".join(lines))
+    state.evidence.atomic_write("report.md", lambda path: path.write_text("\n".join(lines)))
     state.write_json("findings.json", args.model_dump())
     state.finished = True
     state.status = "complete"
