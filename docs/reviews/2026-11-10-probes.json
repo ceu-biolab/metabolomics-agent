@@ -1,0 +1,42 @@
+{
+  "root": "/tmp/metabolomics-review-67rkzp7o",
+  "default_budget": {
+    "status": "token_limit",
+    "output_dir": "/tmp/metabolomics-review-67rkzp7o/default-budget",
+    "total_tokens": 0,
+    "tool_calls": 12,
+    "session_tool_calls": 12,
+    "model_requests": 12,
+    "stage": "03_univariate",
+    "last_tool": "compare_groups"
+  },
+  "sensitivity": {
+    "first": "c001",
+    "second": "c002",
+    "current": [
+      "c002"
+    ],
+    "read_primary": {
+      "ok": false,
+      "error": "The requested result belongs to superseded evidence."
+    },
+    "primary_in_evidence_ids": false
+  },
+  "fabricated_claim": {
+    "ok": true,
+    "result": {
+      "status": "complete",
+      "report": "report.md",
+      "comparisons": [
+        "c002"
+      ],
+      "artifacts": 23
+    }
+  },
+  "duplicate_headers": [
+    "lipid",
+    "lipid.1"
+  ],
+  "actual_significant_features": 3,
+  "fabricated_claim_in_report": true
+}

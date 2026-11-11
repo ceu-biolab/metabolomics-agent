@@ -31,7 +31,7 @@ def tool_reply(name="inspect_dataset", arguments="{}", call_id="call_1", usage=1
 def test_offline_end_to_end_demo(tmp_path):
     study_path = generate_example(tmp_path / "synthetic")
     cfg = StudyConfig.model_validate_json(study_path.read_text())
-    state = RunState(cfg, study_path.parent, tmp_path / "run")
+    state = RunState(cfg, study_path.parent, tmp_path / "run", protocol="legacy")
     result = Agent(state, DemoProvider(), LLMConfig(model="offline", max_total_tokens=500000)).run(
         cfg.objective, progress=lambda _: None)
     assert result["status"] == "complete"

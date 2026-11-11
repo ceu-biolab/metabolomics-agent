@@ -20,7 +20,7 @@ def inspect_dataset(state: RunState):
         row = {"feature": feature, "missing_fraction": x[feature].isna().mean(),
                "zero_fraction": (x[feature] == 0).mean(),
                "unique_observed": x[feature].nunique()}
-        for label in [cfg.reference_group, cfg.treatment_group]:
+        for label in cfg.group_order:
             v = x.loc[meta[cfg.group_column] == label, feature]
             observed = v.dropna()
             q1, q3 = observed.quantile([0.25, 0.75])
@@ -81,79 +81,148 @@ def set_plan(state: RunState, plan: AnalysisPlan):
     pid = f"p{len(state.plans) + 1:03d}"
     state.plans[pid] = plan
     state.write_json(f"{pid}_plan.json", plan.model_dump())
+    state.evidence.register_file(
+        f"{pid}_plan.json", "analysis_plan", plan_id=pid, parameters=plan.model_dump()
+    )
     return {"plan_id": pid, "plan": plan.model_dump(),
             "note": "Subsequent plans after testing are exploratory; earlier evidence remains saved."}
 
 
 def preprocess(state: RunState, plan_id: str):
-    if plan_id not in state.plans:
+    if plan_id not in state.plans and plan_id not in state.preprocessing_plans:
         raise ValueError("Unknown plan ID; call set_plan first.")
     if any(d.plan_id == plan_id for d in state.datasets.values()):
         raise ValueError("This plan already has a prepared dataset. Reuse that dataset ID "
                          "or record a new plan for a revision.")
-    plan = state.plans[plan_id]
+    plan = state.preprocessing_plans.get(plan_id) or state.plans[plan_id]
     x = state.raw.copy()
     notes = []
+    evidence = state.evidence
+    last = None
+
+    def checkpoint(values, kind, scale="unlogged", *, advance=True):
+        nonlocal last
+        if evidence.active is None:
+            return None
+        artifact = evidence.table(
+            values.reset_index(), kind,
+            parent_ids=[last] if last else evidence.active.input_artifact_ids,
+            plan_id=plan_id, scale=scale, parameters=plan.model_dump(),
+            individual_samples=True,
+        )
+        if advance:
+            last = artifact.id
+        return artifact.id
+
+    with evidence.operation("selected_input", parameters={"plan_id": plan_id}):
+        checkpoint(x, "selected_input")
     if plan.zero_as_missing:
-        x = x.mask(x == 0)
-        notes.append("Zeros were explicitly treated as missing before filtering.")
-    missing = x.isna().mean()
-    keep = (missing <= plan.max_missing_fraction) & (x.nunique() > 1)
-    removed = [{"feature": f, "missing_fraction": missing[f],
-                "reason": "missingness" if missing[f] > plan.max_missing_fraction else "constant/all-missing"}
-               for f in x.columns[~keep]]
-    x = x.loc[:, keep]
-    if x.empty:
-        raise ValueError("No features remain after missingness and constant-feature filtering.")
+        with evidence.operation("zero_handling", inputs=[last] if last else []):
+            x = x.mask(x == 0)
+            checkpoint(x, "zeros_as_missing")
+            notes.append("Zeros were explicitly treated as missing before filtering.")
+    else:
+        evidence.skip("zero_handling", "Zeros retained according to the plan.")
+    with evidence.operation("filter", parameters={"max_missing_fraction": plan.max_missing_fraction},
+                            inputs=[last] if last else []):
+        missing = x.isna().mean()
+        keep = (missing <= plan.max_missing_fraction) & (x.nunique() > 1)
+        removed = [{"feature": f, "missing_fraction": missing[f],
+                    "reason": "missingness" if missing[f] > plan.max_missing_fraction else "constant/all-missing"}
+                   for f in x.columns[~keep]]
+        x = x.loc[:, keep]
+        checkpoint(x, "filtered")
+        if evidence.active is not None:
+            evidence.table(pd.DataFrame(removed, columns=["feature", "reason", "missing_fraction"]),
+                           "removed_features", parent_ids=[last], plan_id=plan_id)
+        if x.empty:
+            raise ValueError("No features remain after missingness and constant-feature filtering.")
     missing_count = int(x.isna().sum().sum())
-    if missing_count:
-        if plan.imputation == "median":
-            x = x.fillna(x.median())
-        elif plan.imputation == "half_min":
-            minimum = x.where(x > 0).min() / 2
-            if minimum.isna().any():
-                raise ValueError("Half-minimum imputation requires positive observations per feature.")
-            x = x.fillna(minimum)
-        elif plan.imputation == "knn":
-            x[:] = KNNImputer(n_neighbors=min(5, len(x) - 1)).fit_transform(x)
-        if plan.imputation != "none":
+    imputation_mask = pd.DataFrame(False, index=x.index, columns=x.columns)
+    if missing_count and plan.imputation != "none":
+        with evidence.operation("impute", parameters={"method": plan.imputation},
+                                inputs=[last] if last else []):
+            missing_before = x.isna()
+            if plan.imputation == "median":
+                x = x.fillna(x.median())
+            elif plan.imputation == "half_min":
+                minimum = x.where(x > 0).min() / 2
+                if minimum.isna().any():
+                    raise ValueError("Half-minimum imputation requires positive observations per feature.")
+                x = x.fillna(minimum)
+            elif plan.imputation == "knn":
+                x[:] = KNNImputer(n_neighbors=min(5, len(x) - 1)).fit_transform(x)
+            imputation_mask = missing_before & x.notna()
+            checkpoint(imputation_mask, "imputation_mask", "boolean", advance=False)
+            checkpoint(x, "imputed")
             notes.append("Imputed values are included in tests; inference may depend on imputation. "
                          "Consider an exploratory sensitivity analysis.")
+            evidence.check("IMPUTATION_USED", 0, missing_count, passed=False,
+                           message="Imputation uncertainty is not propagated into inference.")
+    else:
+        evidence.skip("impute", "No missing values, or the plan explicitly disables imputation.")
     if plan.normalization == "median":
-        medians = x.median(axis=1)
-        if medians.isna().any() or (medians <= 0).any():
-            raise ValueError("Median normalization requires positive sample medians.")
-        x = x.div(medians, axis=0) * medians.median()
-        notes.append("Median normalization assumes broadly comparable sample-wide abundance.")
+        with evidence.operation("normalize", parameters={"method": plan.normalization},
+                                inputs=[last] if last else []):
+            medians = x.median(axis=1)
+            if medians.isna().any() or (medians <= 0).any():
+                raise ValueError("Median normalization requires positive sample medians.")
+            x = x.div(medians, axis=0) * medians.median()
+            checkpoint(x, "normalized")
+            notes.append("Median normalization assumes broadly comparable sample-wide abundance.")
+    else:
+        evidence.skip("normalize", "Normalization disabled in the plan.")
     testing = x.copy()
     if plan.transform != "none":
-        if (testing <= 0).any().any():
-            raise ValueError("Log transformation requires strictly positive values. "
-                             "Revise zero handling explicitly; no pseudocount is inserted.")
-        testing = np.log2(testing) if plan.transform == "log2" else np.log10(testing)
+        with evidence.operation("transform", parameters={"method": plan.transform},
+                                inputs=[last] if last else []):
+            positive = not (testing <= 0).any().any()
+            evidence.check("LOG_INPUT_POSITIVE", True, bool(positive), passed=positive,
+                           message="Logarithms require positive inputs.", severity="error")
+            if not positive:
+                raise ValueError("Log transformation requires strictly positive values. "
+                                 "Revise zero handling explicitly; no pseudocount is inserted.")
+            testing = np.log2(testing) if plan.transform == "log2" else np.log10(testing)
+            checkpoint(testing, "transformed", plan.transform)
+    else:
+        evidence.skip("transform", "Transformation disabled in the plan.")
     variance = testing.var(ddof=1)
     variable = (variance > 0) & variance.notna()
     if not variable.all():
         removed.extend({"feature": f, "reason": "constant_after_preprocessing"}
                        for f in testing.columns[~variable])
         x, testing = x.loc[:, variable], testing.loc[:, variable]
+        imputation_mask = imputation_mask.loc[:, variable]
     if testing.empty:
         raise ValueError("No variable features remain after preprocessing.")
-    pca_values = testing - testing.mean()
-    if plan.pca_scaling == "auto":
-        pca_values = pca_values / testing.std(ddof=1)
-    elif plan.pca_scaling == "pareto":
-        pca_values = pca_values / np.sqrt(testing.std(ddof=1))
+    pca_values = None
+    if state.protocol == "legacy":
+        pca_values = testing - testing.mean()
+        if plan.pca_scaling == "auto":
+            pca_values = pca_values / testing.std(ddof=1)
+        elif plan.pca_scaling == "pareto":
+            pca_values = pca_values / np.sqrt(testing.std(ddof=1))
     did = f"d{len(state.datasets) + 1:03d}"
-    state.datasets[did] = Dataset(x, testing, pca_values, plan_id)
-    provenance = {"dataset_id": did, "plan_id": plan_id}
+    provenance = {"dataset_id": did, "plan_id": plan_id,
+                  "parent_ids": [last] if last else []}
     artifacts = {
         "concentrations": state.table(x.reset_index(), "concentrations", provenance),
         "testing": state.table(testing.reset_index(), "testing_values", provenance),
-        "pca": state.table(pca_values.reset_index(), "pca_values", provenance),
-        "filtered_features": state.table(pd.DataFrame(removed, columns=["feature", "reason", "missing_fraction"]),
-                                         "filtered_features", provenance),
     }
+    if pca_values is not None:
+        artifacts["pca"] = state.table(pca_values.reset_index(), "pca_values", provenance)
+    artifacts["filtered_features"] = state.table(
+        pd.DataFrame(removed, columns=["feature", "reason", "missing_fraction"]),
+        "filtered_features", provenance,
+    )
+    if state.run_info.get("descriptive_version") == 1:
+        artifacts["imputation_mask"] = state.table(
+            imputation_mask.reset_index(), "imputation_mask", {**provenance, "scale": "boolean"}
+        )
+    # Publish an executable dataset only after all its tables have been committed.
+    state.datasets[did] = Dataset(x, testing, pca_values, plan_id, artifacts, imputation_mask)
+    evidence.check("PREPARED_DATASET", True, True, passed=True,
+                   message="All representations of the prepared dataset must be saved.")
     return {"dataset_id": did, "plan_id": plan_id, "samples": len(x),
             "features_retained": len(x.columns), "features_removed": len(removed),
             "missing_before_imputation": missing_count,
@@ -161,13 +230,21 @@ def preprocess(state: RunState, plan_id: str):
             "artifacts": artifacts, "notes": notes,
             "representations": "Fold changes use unlogged, unscaled concentrations after selected "
                                "imputation/normalization. Tests use transformed, unscaled values. "
-                               "PCA uses separately centered/scaled values."}
+                               + ("PCA uses separately centered/scaled values." if pca_values is not None
+                                  else "No multivariate representation is generated.")}
 
 
-def compare_groups(state: RunState, dataset_id: str):
+def compare_groups(state: RunState, dataset_id: str, plan_id: str | None = None):
+    if state.run_info.get("univariate_version"):
+        from .univariate import compare_groups as audited_compare_groups
+
+        return audited_compare_groups(state, dataset_id, plan_id)
     dataset = state.dataset(dataset_id)
-    plan, cfg, meta = state.plans[dataset.plan_id], state.config, state.metadata
-    if any(c["dataset_id"] == dataset_id for c in state.comparisons.values()):
+    cfg, meta = state.config, state.metadata
+    plan = state.univariate_plans[plan_id] if plan_id else state.plans[dataset.plan_id]
+    preparation = state.preprocessing_plans[dataset.plan_id] if plan_id else plan
+    if any((c.get("univariate_plan_id") == plan_id if plan_id else c["dataset_id"] == dataset_id)
+           for c in state.comparisons.values()):
         raise ValueError("This dataset has already been tested. Read its result, or set a new exploratory plan.")
     if state.comparisons and plan.purpose == "primary":
         raise ValueError("A statistical analysis has already been performed. Record a new plan; "
@@ -175,7 +252,8 @@ def compare_groups(state: RunState, dataset_id: str):
     records = []
     for feature in dataset.testing:
         c = dataset.concentrations[feature]
-        raw = state.raw[feature].mask(state.raw[feature] == 0) if plan.zero_as_missing else state.raw[feature]
+        raw = (state.raw[feature].mask(state.raw[feature] == 0)
+               if preparation.zero_as_missing else state.raw[feature])
         ref_mask = meta[cfg.group_column] == cfg.reference_group
         treat_mask = meta[cfg.group_column] == cfg.treatment_group
         ref, treat = dataset.testing.loc[ref_mask, feature], dataset.testing.loc[treat_mask, feature]
@@ -252,7 +330,9 @@ def compare_groups(state: RunState, dataset_id: str):
     table["significant"] = table.adjusted_p_value < plan.alpha
     table = table.sort_values("adjusted_p_value", na_position="last")
     cid = f"c{len(state.comparisons) + 1:03d}"
-    provenance = {"dataset_id": dataset_id, "plan_id": dataset.plan_id, "comparison_id": cid}
+    provenance = {"dataset_id": dataset_id, "plan_id": plan_id or dataset.plan_id, "comparison_id": cid}
+    if plan_id:
+        provenance.update(univariate_plan_id=plan_id, preprocessing_plan_id=dataset.plan_id)
     aid = state.table(table, "comparison", provenance)
     summary = {"comparison_id": cid, **provenance, "artifact_id": aid,
                "test": plan.test, "correction": plan.correction, "alpha": plan.alpha,

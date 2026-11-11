@@ -31,7 +31,7 @@ metabolomics-agent = "metabolomics_agent.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-metabolomics_agent = ["prompts/*.md"]
+metabolomics_agent = ["prompts/*.md", "prompts/stages/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
