@@ -81,3 +81,10 @@ The runtime validates closure and generates stage_report.json, its Markdown view
 and handoff.json. Your assessment cannot override missing artifacts or failed
 preconditions. A completed stage may still have warnings. If a required operation
 cannot proceed, report partial evidence and the unresolved requirement honestly.
+
+Loading scope is declared before coordination. A descriptive scope may select one
+or more groups without a reference/treatment comparison. Preserve those groups;
+do not invent a comparison or collapse labels to fit a two-group analysis. Group
+inference still requires an explicit two-group scope. External evaluation results
+are separate from scientific completion: a correct refusal can leave an analysis
+incomplete, and missing reference evidence must remain unassessed.

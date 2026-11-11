@@ -115,3 +115,10 @@ Pass the comparison IDs, raw/audit/issue artifact references, direction, scales,
 correction family, effect definitions, skipped features, warnings, and exploratory
 status to visualization and final reporting. A stage with zero significant
 features can complete; a stage with no valid comparison cannot.
+
+When the diagnostic schema offers normality_method, use lilliefors_norm only if
+the declared reproduction protocol requests that diagnostic; otherwise preserve
+the supported default or justify another offered option. Lilliefors and Shapiro
+results are separately labeled. For paired inference, diagnostics of differences
+are relevant. Non-rejection establishes neither normality nor a rule for choosing
+the group-comparison test.

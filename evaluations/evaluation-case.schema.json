@@ -1,0 +1,808 @@
+{
+  "$defs": {
+    "Condition": {
+      "additionalProperties": false,
+      "properties": {
+        "observation": {
+          "$ref": "#/$defs/Observation"
+        },
+        "equals": {
+          "title": "Equals"
+        },
+        "negate": {
+          "default": false,
+          "title": "Negate",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "observation",
+        "equals"
+      ],
+      "title": "Condition",
+      "type": "object"
+    },
+    "DatasetManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "dataset_id": {
+          "minLength": 1,
+          "title": "Dataset Id",
+          "type": "string"
+        },
+        "root": {
+          "default": ".",
+          "title": "Root",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/FileReference"
+          },
+          "minItems": 1,
+          "title": "Files",
+          "type": "array"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "units": {
+          "default": "unknown",
+          "title": "Units",
+          "type": "string"
+        },
+        "normalization_status": {
+          "default": "unknown",
+          "title": "Normalization Status",
+          "type": "string"
+        },
+        "sample_column": {
+          "default": "sample_id",
+          "title": "Sample Column",
+          "type": "string"
+        },
+        "feature_columns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Feature Columns"
+        },
+        "group_counts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Group Counts",
+          "type": "object"
+        }
+      },
+      "required": [
+        "dataset_id",
+        "files",
+        "source"
+      ],
+      "title": "DatasetManifest",
+      "type": "object"
+    },
+    "FileReference": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "title": "FileReference",
+      "type": "object"
+    },
+    "MetricSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "validator": {
+          "enum": [
+            "exact",
+            "one_of",
+            "numeric",
+            "set",
+            "table",
+            "pca_weights",
+            "audit",
+            "manual"
+          ],
+          "title": "Validator",
+          "type": "string"
+        },
+        "observation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Observation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expected": {
+          "default": null,
+          "title": "Expected"
+        },
+        "expected_is_set": {
+          "default": false,
+          "title": "Expected Is Set",
+          "type": "boolean"
+        },
+        "reference_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference Id"
+        },
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "component_blocks": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Component Blocks",
+          "type": "array"
+        },
+        "tolerance": {
+          "$ref": "#/$defs/Tolerance"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "provenance": {
+          "minLength": 1,
+          "title": "Provenance",
+          "type": "string"
+        },
+        "audit_prefixes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Audit Prefixes",
+          "type": "array"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "review_scope": {
+          "default": "scientific",
+          "enum": [
+            "scientific",
+            "visual",
+            "narrative"
+          ],
+          "title": "Review Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "validator",
+        "provenance"
+      ],
+      "title": "MetricSpec",
+      "type": "object"
+    },
+    "Observation": {
+      "additionalProperties": false,
+      "properties": {
+        "document": {
+          "default": "state",
+          "enum": [
+            "state",
+            "run",
+            "audit",
+            "findings",
+            "stage_report",
+            "table"
+          ],
+          "title": "Document",
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Path",
+          "type": "array"
+        },
+        "artifact_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Id"
+        },
+        "artifact_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Artifact Kind"
+        },
+        "column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column"
+        }
+      },
+      "title": "Observation",
+      "type": "object"
+    },
+    "ReferenceEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "origin": {
+          "enum": [
+            "published",
+            "author_script",
+            "collaborator",
+            "mathematical",
+            "synthetic"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "producer": {
+          "title": "Producer",
+          "type": "string"
+        },
+        "review_status": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "reviewed"
+          ],
+          "title": "Review Status",
+          "type": "string"
+        },
+        "independence": {
+          "title": "Independence",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "id",
+        "origin",
+        "source",
+        "producer",
+        "independence"
+      ],
+      "title": "ReferenceEntry",
+      "type": "object"
+    },
+    "ReferenceManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/ReferenceEntry"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "support_files": {
+          "items": {
+            "$ref": "#/$defs/FileReference"
+          },
+          "title": "Support Files",
+          "type": "array"
+        }
+      },
+      "title": "ReferenceManifest",
+      "type": "object"
+    },
+    "ScriptStep": {
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "expect_ok": {
+          "default": true,
+          "title": "Expect Ok",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tool"
+      ],
+      "title": "ScriptStep",
+      "type": "object"
+    },
+    "StageExpectation": {
+      "additionalProperties": false,
+      "properties": {
+        "stage_id": {
+          "enum": [
+            "01_coordination",
+            "02_preparation",
+            "03_univariate",
+            "03_pca",
+            "04_visualization",
+            "05_reporting"
+          ],
+          "title": "Stage Id",
+          "type": "string"
+        },
+        "applicability": {
+          "default": "required",
+          "enum": [
+            "required",
+            "optional",
+            "conditional",
+            "out_of_scope"
+          ],
+          "title": "Applicability",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "depends_on": {
+          "items": {
+            "enum": [
+              "01_coordination",
+              "02_preparation",
+              "03_univariate",
+              "03_pca",
+              "04_visualization",
+              "05_reporting"
+            ],
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "requires_artifact_kinds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Requires Artifact Kinds",
+          "type": "array"
+        },
+        "metrics": {
+          "items": {
+            "$ref": "#/$defs/MetricSpec"
+          },
+          "title": "Metrics",
+          "type": "array"
+        }
+      },
+      "required": [
+        "stage_id",
+        "reason"
+      ],
+      "title": "StageExpectation",
+      "type": "object"
+    },
+    "StageInputPackage": {
+      "additionalProperties": false,
+      "properties": {
+        "stage_id": {
+          "enum": [
+            "01_coordination",
+            "02_preparation",
+            "03_univariate",
+            "03_pca",
+            "04_visualization",
+            "05_reporting"
+          ],
+          "title": "Stage Id",
+          "type": "string"
+        },
+        "root": {
+          "title": "Root",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/FileReference"
+          },
+          "minItems": 1,
+          "title": "Files",
+          "type": "array"
+        },
+        "provenance": {
+          "minLength": 1,
+          "title": "Provenance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage_id",
+        "root",
+        "files",
+        "provenance"
+      ],
+      "title": "StageInputPackage",
+      "type": "object"
+    },
+    "StudyConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "data_path": {
+          "title": "Data Path",
+          "type": "string"
+        },
+        "metadata_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata Path"
+        },
+        "sample_column": {
+          "default": "sample_id",
+          "title": "Sample Column",
+          "type": "string"
+        },
+        "group_column": {
+          "default": "group",
+          "title": "Group Column",
+          "type": "string"
+        },
+        "reference_group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference Group"
+        },
+        "treatment_group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Treatment Group"
+        },
+        "analysis_scope": {
+          "default": "two_group",
+          "enum": [
+            "two_group",
+            "descriptive"
+          ],
+          "title": "Analysis Scope",
+          "type": "string"
+        },
+        "selected_groups": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Selected Groups",
+          "type": "array"
+        },
+        "design": {
+          "default": "independent",
+          "enum": [
+            "independent",
+            "paired"
+          ],
+          "title": "Design",
+          "type": "string"
+        },
+        "pair_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pair Column"
+        },
+        "batch_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Batch Column"
+        },
+        "metadata_columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Metadata Columns",
+          "type": "array"
+        },
+        "feature_columns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Feature Columns"
+        },
+        "input_scale": {
+          "default": "concentration",
+          "enum": [
+            "concentration",
+            "intensity"
+          ],
+          "title": "Input Scale",
+          "type": "string"
+        },
+        "normalization_status": {
+          "default": "Unknown; do not assume prior normalization.",
+          "title": "Normalization Status",
+          "type": "string"
+        },
+        "objective": {
+          "default": "Compare the specified groups and assess robustness and data quality.",
+          "title": "Objective",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data_path"
+      ],
+      "title": "StudyConfig",
+      "type": "object"
+    },
+    "Tolerance": {
+      "additionalProperties": false,
+      "properties": {
+        "rtol": {
+          "default": 1e-09,
+          "minimum": 0,
+          "title": "Rtol",
+          "type": "number"
+        },
+        "atol": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Atol",
+          "type": "number"
+        }
+      },
+      "title": "Tolerance",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "case_id": {
+      "pattern": "^[a-zA-Z0-9_.-]+$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "reproduction",
+        "open_analysis"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "dataset": {
+      "$ref": "#/$defs/DatasetManifest"
+    },
+    "study": {
+      "$ref": "#/$defs/StudyConfig"
+    },
+    "request": {
+      "minLength": 1,
+      "title": "Request",
+      "type": "string"
+    },
+    "references": {
+      "$ref": "#/$defs/ReferenceManifest"
+    },
+    "stages": {
+      "items": {
+        "$ref": "#/$defs/StageExpectation"
+      },
+      "minItems": 1,
+      "title": "Stages",
+      "type": "array"
+    },
+    "script": {
+      "items": {
+        "$ref": "#/$defs/ScriptStep"
+      },
+      "title": "Script",
+      "type": "array"
+    },
+    "expected_execution_status": {
+      "default": "complete",
+      "title": "Expected Execution Status",
+      "type": "string"
+    },
+    "continuation_policy": {
+      "default": "observe",
+      "enum": [
+        "observe",
+        "stop_on_critical"
+      ],
+      "title": "Continuation Policy",
+      "type": "string"
+    },
+    "seed": {
+      "default": 42,
+      "title": "Seed",
+      "type": "integer"
+    },
+    "stage_packages": {
+      "items": {
+        "$ref": "#/$defs/StageInputPackage"
+      },
+      "title": "Stage Packages",
+      "type": "array"
+    }
+  },
+  "required": [
+    "case_id",
+    "mode",
+    "dataset",
+    "study",
+    "request",
+    "stages"
+  ],
+  "title": "EvaluationCase",
+  "type": "object"
+}

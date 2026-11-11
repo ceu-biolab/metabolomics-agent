@@ -5,7 +5,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from .evidence_models import StageIssue
-from .models import Finding, Model, TestName
+from .models import DatasetArgs, Finding, Model, TestName
 
 StageID = Literal[
     "01_coordination", "02_preparation", "03_univariate", "04_visualization", "05_reporting",
@@ -240,8 +240,8 @@ class FigureSpecV2(FigureSpecV1):
             raise ValueError("Figure features must be unique.")
         if self.kind != "heatmap" and (self.centering != "none" or self.scaling != "none"):
             raise ValueError("Display centering/scaling is only available for heatmaps.")
-        if self.kind != "heatmap" and len(self.features) > 12:
-            raise ValueError("Only heatmaps support more than 12 explicit features.")
+        if self.kind not in {"heatmap", "pca_loadings_scatter"} and len(self.features) > 12:
+            raise ValueError("Only heatmaps and PCA loading scatterplots support more than 12 explicit features.")
         if self.kind == "volcano" and self.scale != "concentrations":
             raise ValueError("Volcano fold changes use concentration-scale means.")
         if self.selection_mode == "significant":
@@ -258,3 +258,20 @@ class FigureSpecV2(FigureSpecV1):
 
 class FigurePlanV2(FigurePlan):
     figures: list[FigureSpecV2] = Field(default_factory=list, max_length=12)
+
+
+class WorkflowPlanV3(WorkflowPlanV2):
+    required_figures: list[Literal["distributions", "boxplot", "volcano", "heatmap", "pca_scores", "pca_scree", "pca_loadings", "pca_loadings_scatter"]] = Field(
+        default_factory=lambda: ["distributions", "volcano"])
+
+
+class FigureSpecV3(FigureSpecV2):
+    kind: Literal["distributions", "boxplot", "volcano", "heatmap", "pca_scores", "pca_scree", "pca_loadings", "pca_loadings_scatter"]
+
+
+class FigurePlanV3(FigurePlan):
+    figures: list[FigureSpecV3] = Field(default_factory=list, max_length=12)
+
+
+class UnivariateInspectArgs(DatasetArgs):
+    normality_method: Literal["shapiro", "lilliefors_norm"] = "shapiro"

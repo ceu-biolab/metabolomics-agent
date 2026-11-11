@@ -188,6 +188,18 @@ def descriptor(result):
 def plot_source(state, args):
     result = state.pcas[args.source_id]
     methods = descriptor(result)
+    if args.kind == "pca_loadings_scatter":
+        names = [f"PC{i}" for i in args.components]
+        if max(args.components) > result["components"]:
+            raise ValueError("Requested loading components were not calculated.")
+        source = state.read_artifact(result["artifacts"]["loadings"])[["feature", *names]]
+        if args.features:
+            if set(args.features) - set(source.feature):
+                raise ValueError("Loading plot features must exist in the PCA result.")
+            source = source.set_index("feature").loc[args.features].reset_index()
+        methods.update(score_columns=names, loadings_definition="unit eigenvector weights, not variable-PC correlations")
+        return source, source.feature.tolist(), [result["artifacts"]["loadings"]], methods, {
+            "x": f"{names[0]} eigenvector weight", "y": f"{names[1]} eigenvector weight"}
     if args.kind == "pca_scores":
         first, second = args.components
         if max(first, second) > result["components"]:

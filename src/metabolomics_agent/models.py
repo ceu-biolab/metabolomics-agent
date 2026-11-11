@@ -12,8 +12,10 @@ class StudyConfig(Model):
     metadata_path: str | None = None
     sample_column: str = "sample_id"
     group_column: str = "group"
-    reference_group: str
-    treatment_group: str
+    reference_group: str | None = None
+    treatment_group: str | None = None
+    analysis_scope: Literal["two_group", "descriptive"] = "two_group"
+    selected_groups: list[str] = Field(default_factory=list)
     design: Literal["independent", "paired"] = "independent"
     pair_column: str | None = None
     batch_column: str | None = None
@@ -25,13 +27,24 @@ class StudyConfig(Model):
 
     @model_validator(mode="after")
     def check_design(self):
-        if self.reference_group == self.treatment_group:
+        if self.analysis_scope == "descriptive":
+            if not self.selected_groups or len(set(self.selected_groups)) != len(self.selected_groups):
+                raise ValueError("Descriptive loading requires explicit unique selected_groups.")
+            if self.design != "independent" or self.reference_group is not None or self.treatment_group is not None:
+                raise ValueError("Descriptive loading has no comparison groups or paired inference.")
+        elif not self.reference_group or not self.treatment_group or self.reference_group == self.treatment_group:
             raise ValueError("Reference and treatment groups must differ.")
+        elif self.selected_groups and self.selected_groups != [self.reference_group, self.treatment_group]:
+            raise ValueError("Two-group scope selects only its declared comparison groups.")
         if self.design == "paired" and not self.pair_column:
             raise ValueError("Paired studies require pair_column.")
         if self.feature_columns is not None and not self.feature_columns:
             raise ValueError("feature_columns cannot be empty.")
         return self
+
+    @property
+    def group_order(self):
+        return self.selected_groups if self.analysis_scope == "descriptive" else [self.reference_group, self.treatment_group]
 
 
 TestName = Literal["welch_t", "student_t", "mannwhitney", "paired_t", "wilcoxon"]
@@ -87,6 +100,21 @@ class Finding(Model):
 class FinishArgs(Model):
     findings: list[Finding] = Field(min_length=1, max_length=20)
     limitations: list[str] = Field(min_length=1, max_length=20)
+
+
+class QuantitativeClaim(Model):
+    comparison_id: str
+    feature: str | None = None
+    metric: Literal["significant_features", "features_tested", "p_value", "adjusted_p_value", "log2_fold_change", "statistic"]
+    value: float
+
+
+class VerifiedFinding(Finding):
+    claims: list[QuantitativeClaim] = Field(default_factory=list, max_length=20)
+
+
+class FinishArgsV2(FinishArgs):
+    findings: list[VerifiedFinding] = Field(min_length=1, max_length=20)
 
 
 class LLMConfig(Model):

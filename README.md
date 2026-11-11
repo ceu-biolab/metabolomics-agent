@@ -5,7 +5,7 @@ analysis plan. Python executes the calculations and records every decision.
 The tools use the libraries discussed in [Idkowiak et al. (2025)](https://doi.org/10.1038/s41467-025-63751-1)
 and its [companion GitBook](https://laboratory-of-lipid-metabolism-a.gitbook.io/omics-data-visualization-in-r-and-python).
 
-The current scope is **two-group analysis of already quantified concentration or
+The inferential scope is **two-group analysis of already quantified concentration or
 intensity tables**. It includes independent and paired designs, missing-value
 handling, group-wise descriptive statistics, univariate tests, plots, and a Markdown report.
 New runs follow five validated stages: coordination, preparation, univariate
@@ -13,6 +13,8 @@ analysis, visualization, and reporting. Exploratory PCA is available as an optio
 block of the statistical stage; other multivariate methods and batch/QC correction
 are excluded. It does not process raw MS files. No LLM API request is
 made by installation, tests, or the offline demo.
+Descriptive/PCA loading can also preserve an explicit list of groups without a
+reference/treatment comparison; it does not add multi-group inference.
 
 ## Install
 
@@ -420,6 +422,27 @@ checks without involving an LLM. Sources and exact parameters are included.
 For a live analysis of that dataset, use `examples/gitbook-study.json` after
 downloading it. The agent's objective specifies exact reproduction; any suggested
 alternative should be a separately labeled exploratory analysis.
+
+[H's evaluation guide](docs/staged-workflow/evaluation-guide.md) describes reusable
+case contracts, per-stage metrics, applicability, numerical references and honest
+coverage reporting. The three registered cases in `evaluations/cases/lipidomics/`
+reproduce Student/Holm–Šidák, Mann–Whitney/Holm–Šidák, and the full-cohort Python
+PCA example. Dataset files remain under ignored `data/`; selected reference checks
+and G's synthetic suite remain available. Live model evaluation (H8) is pending.
+
+```bash
+python -m metabolomics_agent evaluate-case \
+  --case evaluations/cases/lipidomics/student_t.json --output runs/H-student
+python -m metabolomics_agent make-evaluation-example \
+  --variant descriptive --seed 913 --output runs/H-example-case
+python -m metabolomics_agent evaluate-case \
+  --case runs/H-example-case/case.json --output runs/H-example-evaluation
+```
+
+An evaluation pass is distinct from analysis completion. Optional human review
+remains unassessed until recorded against the exact evidence; its missing coverage
+is visible. See [plan H](docs/staged-workflow/plan-H.md) for the implementation
+sequence and [delivery H](docs/staged-workflow/delivery-H.md) for validation results.
 
 ## Verification
 

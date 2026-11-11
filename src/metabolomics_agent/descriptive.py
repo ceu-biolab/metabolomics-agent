@@ -109,7 +109,7 @@ def summarize_dataset(state, args):
     if not np.isfinite(values.to_numpy()[values.notna().to_numpy()]).all():
         raise ValueError("Descriptive summaries require finite nonmissing source values.")
     labels = state.metadata.loc[values.index, state.config.group_column]
-    groups = ([state.config.reference_group, state.config.treatment_group]
+    groups = (state.config.group_order
               if args.grouping == "group" else ["all_selected_samples"])
     numbers = [int(sid[1:]) for sid in state.descriptive_summaries]
     numbers += [int(path.name.split("_")[0][1:]) for path in state.output_dir.glob("s[0-9]*_summary.json")]

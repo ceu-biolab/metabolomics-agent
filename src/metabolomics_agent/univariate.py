@@ -118,7 +118,11 @@ def _next_id(state, prefix, collection, parameter):
     return f"{prefix}{max(numbers, default=0) + 1:03d}"
 
 
-def inspect_univariate(state, dataset_id):
+def inspect_univariate(state, dataset_id, normality_method="shapiro"):
+    if state.config.analysis_scope != "two_group":
+        raise ValueError("Univariate comparisons require an explicit two-group loading scope.")
+    if normality_method not in {"shapiro", "lilliefors_norm"}:
+        raise ValueError("Unsupported normality diagnostic.")
     values, observed, mask, provenance = _source(state, dataset_id)
     uid = _next_id(state, "uv", state.univariate_diagnostics, "diagnostic_id")
     rows = []
@@ -134,12 +138,30 @@ def inspect_univariate(state, dataset_id):
                 if not np.isfinite(row[f"variance_{name}"]):
                     row[f"variance_{name}"] = np.nan
                 row[f"shapiro_p_{name}"], row[f"shapiro_status_{name}"] = _normality(series)
+                if normality_method == "lilliefors_norm":
+                    from statsmodels.stats.diagnostic import kstest_normal
+                    populations = [(name, series)]
+                    if state.config.design == "independent":
+                        populations.append((f"observed_{name}", series.loc[observed.loc[series.index, feature]]))
+                    for suffix, selected in populations:
+                        usable = len(selected) >= 4 and selected.nunique() > 1
+                        statistic, pvalue = kstest_normal(selected, "norm") if usable else (np.nan, np.nan)
+                        row[f"lilliefors_statistic_{suffix}"] = statistic
+                        row[f"lilliefors_p_{suffix}"] = pvalue
+                        row[f"lilliefors_status_{suffix}"] = "ok" if usable and np.isfinite(pvalue) else "insufficient_or_constant_values"
                 only_observed = series.loc[observed.loc[series.index, feature]] if state.config.design == "independent" else pd.Series(dtype=float)
                 if state.config.design == "independent":
                     row[f"shapiro_observed_p_{name}"], row[f"shapiro_observed_status_{name}"] = _normality(only_observed)
             if state.config.design == "paired":
                 row["shapiro_p_differences"], row["shapiro_status_differences"] = _normality(differences)
                 row["shapiro_observed_p_differences"], row["shapiro_observed_status_differences"] = _normality(observed_differences)
+                if normality_method == "lilliefors_norm":
+                    for suffix, selected in [("differences", differences), ("observed_differences", observed_differences)]:
+                        usable = len(selected) >= 4 and selected.nunique() > 1
+                        statistic, pvalue = kstest_normal(selected, "norm") if usable else (np.nan, np.nan)
+                        row[f"lilliefors_statistic_{suffix}"] = statistic
+                        row[f"lilliefors_p_{suffix}"] = pvalue
+                        row[f"lilliefors_status_{suffix}"] = "ok" if usable and np.isfinite(pvalue) else "insufficient_or_constant_values"
             rows.append(row)
         frame = pd.DataFrame(rows)
         aid = state.table(frame, "univariate_diagnostics", {
@@ -147,6 +169,7 @@ def inspect_univariate(state, dataset_id):
             "parent_ids": provenance["input_artifact_ids"], "parameters": {"diagnostic_id": uid},
         })
         result = {
+            "normality_method": normality_method,
             "diagnostic_id": uid, "dataset_id": dataset_id,
             "preprocessing_plan_id": provenance["plan_id"], "transform": provenance["transform"],
             "artifacts": {"diagnostics": aid},

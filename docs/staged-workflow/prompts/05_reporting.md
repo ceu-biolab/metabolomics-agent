@@ -111,3 +111,9 @@ The selection did not change the correction family. No selected features is a
 justified omission with a saved record. Failed rendering or an incomplete page
 set cannot satisfy the requested figure. Distinguish an optional skipped PCA from
 a required incomplete PCA, and respect the registered objective when finalizing.
+
+When finish_analysis offers structured numerical claims, bind each claim to its
+current cited comparison, metric, feature when applicable, and observed value.
+The runtime verifies these fields against saved results. This does not validate
+arbitrary surrounding prose: preserve the scope of verification, independent
+scientific-review status and visual-review limitations explicitly.

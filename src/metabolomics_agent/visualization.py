@@ -153,6 +153,14 @@ def _render(state, args, display, features, metadata):
             sns.scatterplot(data=display, x=first, y=second, hue=state.config.group_column,
                             hue_order=order, s=55, ax=ax)
             ax.set(title="Exploratory PCA scores")
+        elif args.kind == "pca_loadings_scatter":
+            first, second = metadata["methods"]["score_columns"]
+            fig.set_size_inches(15, 15)
+            sns.scatterplot(data=display, x=first, y=second, ax=ax, s=20)
+            for _, row in display.iterrows():
+                ax.annotate(row.feature, (row[first], row[second]), fontsize=6,
+                            xytext=(2, 0), textcoords="offset points")
+            ax.set(title="PCA eigenvector weights")
         elif args.kind == "pca_scree":
             positions = np.arange(len(display))
             ax.bar(positions, 100*display.explained_variance_ratio, color="#647c91", label="Per component")
@@ -217,9 +225,11 @@ def _render(state, args, display, features, metadata):
     sns.heatmap(matrix.T, cmap="vlag" if centered else "viridis", center=0 if centered else None,
                 xticklabels=False, ax=ax, cbar_kws={"label": color_label})
     if args.sample_order == "group":
-        first = int((state.metadata[state.config.group_column] == order[0]).sum())
-        ax.axvline(first, color="black", linewidth=1)
-        ax.set_xticks([first/2, first+(len(samples)-first)/2], labels=order)
+        counts = np.array([(state.metadata[state.config.group_column] == group).sum() for group in order])
+        boundaries = np.cumsum(counts)
+        for boundary in boundaries[:-1]:
+            ax.axvline(boundary, color="black", linewidth=1)
+        ax.set_xticks(boundaries - counts/2, labels=order)
     ax.set(title=f"Heatmap without clustering; samples in {args.sample_order} order", xlabel="Samples", ylabel="Features")
     return fig
 
@@ -234,7 +244,7 @@ def make_audited_plot(state, args, *, resolved_features=None, selection=None, se
                   "dataset_id": args.source_id if args.source_id in state.datasets else None}
     metadata = {"schema_version": 1, "status": "preparing", "figure_spec": args.model_dump(),
                 "selected_features": features, "methods": methods, "labels": labels,
-                "group_order": [state.config.reference_group, state.config.treatment_group],
+                "group_order": state.config.group_order,
                 "omitted_values": 0, "clipped_zero_p": 0, "paired_lines": 0, "display_notes": [],
                 "imputed_values": (methods.get("imputed_cells", 0) if args.kind.startswith("pca_")
                                    else int(source["imputed"].sum()) if "imputed" in source else 0),

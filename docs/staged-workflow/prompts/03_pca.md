@@ -59,3 +59,9 @@ The runtime saves checkpoints before later operations. Failed fits keep committe
 inputs/scaling/matrices and a failure record; they are not completed PCA results.
 Imputed values are not additional original measurements, and imputation uncertainty
 is not propagated. Carry these caveats into visualization and reporting.
+
+Descriptive loading may include more than two groups; all declared groups must
+remain in the fit. When required by a reproduction protocol, retain its exact
+component count and scaling convention. A pca_loadings_scatter figure, when
+offered by the schema, plots eigenvector weights on two component axes and uses
+feature identities for labels. It is distinct from a ranked loading bar chart.

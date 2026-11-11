@@ -13,7 +13,8 @@ from .models import AnalysisPlan, StudyConfig
 from .serialization import clean_json as clean_json, dumps as dumps
 from .workflow import Workflow
 from .workflow_models import (FigurePlan, FigurePlanV1, PreprocessingPlan, UnivariatePlan,
-                              UnivariatePlanV1, WorkflowPlan, WorkflowPlanV1, WorkflowPlanV2, FigurePlanV2, PCAPlan)
+                              UnivariatePlanV1, WorkflowPlan, WorkflowPlanV1, WorkflowPlanV2, FigurePlanV2, PCAPlan,
+                              WorkflowPlanV3, FigurePlanV3)
 
 
 @dataclass
@@ -61,10 +62,12 @@ class RunState:
             raise ValueError("Unsupported descriptive workflow version.")
         if self.run_info.get("univariate_version", 0) not in {0, 1}:
             raise ValueError("Unsupported univariate workflow version.")
-        if self.run_info.get("visualization_version", 0) not in {0, 1, 2}:
+        if self.run_info.get("visualization_version", 0) not in {0, 1, 2, 3}:
             raise ValueError("Unsupported visualization workflow version.")
         if self.run_info.get("pca_version", 0) not in {0, 1}:
             raise ValueError("Unsupported PCA workflow version.")
+        if any(self.run_info.get(key, 0) not in {0, 1} for key in ['diagnostic_version', 'reporting_version']):
+            raise ValueError("Unsupported diagnostic/reporting workflow version.")
         if self.run_info.get("univariate_version") and not self.run_info.get("descriptive_version"):
             raise ValueError("Audited inference requires saved observed/imputed provenance.")
         if self.protocol not in {"legacy", "staged_v1"}:
@@ -72,9 +75,9 @@ class RunState:
         if self.protocol == "staged_v1" and not saved.get("workflow"):
             raise ValueError("Missing staged workflow state.")
         self.plans = {pid: AnalysisPlan.model_validate(p) for pid, p in saved["plans"].items()}
-        for attribute, model in [("workflow_plans", WorkflowPlanV2 if self.run_info.get("visualization_version") == 2 else WorkflowPlanV1 if self.run_info.get("visualization_version") else WorkflowPlan), ("preprocessing_plans", PreprocessingPlan),
+        for attribute, model in [("workflow_plans", WorkflowPlanV3 if self.run_info.get("visualization_version") == 3 else WorkflowPlanV2 if self.run_info.get("visualization_version") == 2 else WorkflowPlanV1 if self.run_info.get("visualization_version") else WorkflowPlan), ("preprocessing_plans", PreprocessingPlan),
                                  ("univariate_plans", UnivariatePlanV1 if self.run_info.get("univariate_version") else UnivariatePlan),
-                                 ("figure_plans", FigurePlanV2 if self.run_info.get("visualization_version") == 2 else FigurePlanV1 if self.run_info.get("visualization_version") else FigurePlan)]:
+                                 ("figure_plans", FigurePlanV3 if self.run_info.get("visualization_version") == 3 else FigurePlanV2 if self.run_info.get("visualization_version") == 2 else FigurePlanV1 if self.run_info.get("visualization_version") else FigurePlan)]:
             setattr(self, attribute, {pid: model.model_validate(plan)
                                      for pid, plan in saved.get(attribute, {}).items()})
         self.artifacts = saved["artifacts"]
@@ -129,6 +132,8 @@ class RunState:
                  *, protocol="staged_v1"):
         if protocol not in {"legacy", "staged_v1"}:
             raise ValueError("Unsupported workflow protocol.")
+        if protocol == "legacy" and config.analysis_scope == "descriptive":
+            raise ValueError("Descriptive loading requires the staged protocol.")
         self.config = config
         self.seed = seed
         self.protocol = protocol
@@ -163,7 +168,9 @@ class RunState:
             "context_strategy": "phase_window_v1" if protocol == "staged_v1" else "full_history",
             "descriptive_version": 1 if protocol == "staged_v1" else 0,
             "univariate_version": 1 if protocol == "staged_v1" else 0,
-            "visualization_version": 2 if protocol == "staged_v1" else 0,
+            "visualization_version": 3 if protocol == "staged_v1" else 0,
+            "diagnostic_version": 1 if protocol == "staged_v1" else 0,
+            "reporting_version": 1 if protocol == "staged_v1" else 0,
             "pca_version": 1 if protocol == "staged_v1" else 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "study": config.model_dump(), "seed": seed, "python": platform.python_version(),

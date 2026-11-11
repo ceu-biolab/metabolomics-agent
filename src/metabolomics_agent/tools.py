@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from . import analysis
 from .descriptive import summarize_dataset
 from .univariate import inspect_univariate
-from .models import (AnalysisPlan, DatasetArgs, FinishArgs, InspectArgs, PCAArgs,
+from .models import (AnalysisPlan, DatasetArgs, FinishArgs, FinishArgsV2, InspectArgs, PCAArgs,
                      PlotArgs, PrepareArgs, ReadResultArgs)
 from .plots import make_plot
 from .report import finish_analysis
@@ -18,7 +18,8 @@ from .workflow import COMMON_TOOLS, PCA_TOOLS, STAGES, STAGE_TOOLS
 from .workflow_models import (CompareArgs, FigurePlan, FigurePlanV1, FigureSpec, FigureSpecV1, PreprocessingPlan,
                               ReadStageArgs, RevisionArgs, StageAssessment,
                               SummaryArgs, UnivariatePlan, UnivariatePlanV1, WorkflowPlan, WorkflowPlanV1,
-                              WorkflowPlanV2, FigurePlanV2, FigureSpecV2, PCAPlan, PCAInputArgs, SkipPCAArgs)
+                              WorkflowPlanV2, FigurePlanV2, FigureSpecV2, PCAPlan, PCAInputArgs, SkipPCAArgs,
+                              WorkflowPlanV3, FigurePlanV3, FigureSpecV3, UnivariateInspectArgs)
 
 
 TOOL_DEFINITIONS = {
@@ -87,8 +88,19 @@ class ToolRegistry:
             for name, (model, description) in STAGED_DEFINITIONS.items():
                 if name not in allowed:
                     continue
+                if self.state is None:
+                    model = {"make_plot": FigureSpecV3, "set_figure_plan": FigurePlanV3,
+                             "set_workflow_plan": WorkflowPlanV3, "inspect_univariate": UnivariateInspectArgs,
+                             "finish_analysis": FinishArgsV2}.get(name, model)
                 if name == "set_univariate_plan" and self.state and not self.state.run_info.get("univariate_version"):
                     model = UnivariatePlan
+                if self.state and self.state.run_info.get("visualization_version") == 3:
+                    model = {"make_plot": FigureSpecV3, "set_figure_plan": FigurePlanV3,
+                             "set_workflow_plan": WorkflowPlanV3}.get(name, model)
+                if self.state and self.state.run_info.get("diagnostic_version") and name == "inspect_univariate":
+                    model = UnivariateInspectArgs
+                if self.state and self.state.run_info.get("reporting_version") and name == "finish_analysis":
+                    model = FinishArgsV2
                 if self.state and self.state.run_info.get("visualization_version") == 1:
                     model = {"make_plot": FigureSpecV1, "set_figure_plan": FigurePlanV1,
                              "set_workflow_plan": WorkflowPlanV1}.get(name, model)
@@ -201,6 +213,13 @@ class ToolRegistry:
                     raise ValueError("Tool arguments exceed 32000 characters.")
                 arguments = json.loads(arguments)
             model = STAGED_DEFINITIONS[name][0]
+            if state.run_info.get("visualization_version") == 3:
+                model = {"make_plot": FigureSpecV3, "set_figure_plan": FigurePlanV3,
+                         "set_workflow_plan": WorkflowPlanV3}.get(name, model)
+            if state.run_info.get("diagnostic_version") and name == "inspect_univariate":
+                model = UnivariateInspectArgs
+            if state.run_info.get("reporting_version") and name == "finish_analysis":
+                model = FinishArgsV2
             if name == "set_univariate_plan" and not state.run_info.get("univariate_version"):
                 model = UnivariatePlan
             if state.run_info.get("visualization_version") == 1:
@@ -263,7 +282,7 @@ class ToolRegistry:
                         raise ValueError("Inspect the current prepared dataset.")
                     if workflow.data.univariate_plan_id:
                         raise ValueError("Request a revision before replacing diagnostics after planning.")
-                    result = inspect_univariate(state, parsed.dataset_id)
+                    result = inspect_univariate(state, parsed.dataset_id, getattr(parsed, "normality_method", "shapiro"))
                     workflow.data.univariate_diagnostic_id = result["diagnostic_id"]
                 elif name == "compare_groups":
                     if (parsed.dataset_id != workflow.data.dataset_id or

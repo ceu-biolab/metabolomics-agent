@@ -139,8 +139,9 @@ pages_expected, artifact_ids and status. A justified skipped_no_significant outc
 is valid when no eligible feature meets the criterion; an empty image or failed
 page is not success. The report links selections and pagination outcomes.
 
-PCA figure kinds are pca_scores, pca_scree and pca_loadings, with source_id equal
-to a current completed PCA ID. These tools read saved PCA results and never refit.
+Schema-dependent PCA figure kinds include pca_scores, pca_scree, pca_loadings and,
+in profile 3, pca_loadings_scatter. source_id identifies a current completed PCA.
+These tools read saved PCA results and never refit.
 Scores use the two requested distinct component numbers and label axes with saved
 variance percentages. Coloring uses group metadata only after the fit. Scree plots
 show the calculated components and their cumulative variance, which need not reach
@@ -148,3 +149,6 @@ show the calculated components and their cumulative variance, which need not rea
 choose an explicit feature list or document the deterministic largest-absolute-
 weight selection (max_loading_features, ties by feature name). No new significance
 annotations, ellipses or biological clustering claims are created.
+The scatter kind uses the requested pair of component axes and all loading
+features unless an explicit list is supplied; labels use feature identities.
+Its weights are distinct from variable-PC correlations and ranked loading bars.

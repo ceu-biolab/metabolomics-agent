@@ -71,11 +71,37 @@ def main(argv=None):
     audit = commands.add_parser("audit-run", help="Audit saved staged evidence without changing the run or calling a model")
     audit.add_argument("--run", type=Path, required=True)
     audit.add_argument("--output", type=Path)
+    case_evaluation = commands.add_parser("evaluate-case", help="Evaluate a versioned case offline or audit its saved run; no LLM/key")
+    case_evaluation.add_argument("--case", type=Path, required=True)
+    case_evaluation.add_argument("--run", type=Path)
+    case_evaluation.add_argument("--output", type=Path, required=True)
+    case_evaluation.add_argument("--stage", choices=[*STAGES, "03_pca"])
+    evaluation_example = commands.add_parser("make-evaluation-example", help="Write a reusable synthetic case without a key")
+    evaluation_example.add_argument("--output", type=Path, required=True)
+    evaluation_example.add_argument("--variant", choices=[case.name for case in CASES if not case.guards and not case.resume_after], default="independent")
+    evaluation_example.add_argument("--seed", type=int, default=42)
+    lipidomics = commands.add_parser("register-lipidomics", help="Build independent tutorial references and three reusable cases from the original Excel; no LLM")
+    lipidomics.add_argument("--dataset", type=Path, required=True)
+    lipidomics.add_argument("--output", type=Path, required=True)
     schemas = commands.add_parser("tool-schemas", help="Print staged function schemas (coordination by default)")
     schemas.add_argument("--stage", choices=STAGES, default=STAGES[0])
     schemas.add_argument("--analysis-block", choices=["univariate", "pca"], default="univariate")
     args = parser.parse_args(argv)
     try:
+        if args.command == "register-lipidomics":
+            from .lipidomics_cases import register_lipidomics
+            print(dumps({"cases": register_lipidomics(args.dataset, args.output), "api_calls": 0}))
+            return 0
+        if args.command == "make-evaluation-example":
+            from .evaluation_examples import make_evaluation_example
+            print(make_evaluation_example(args.output, args.variant, args.seed))
+            return 0
+        if args.command == "evaluate-case":
+            from .case_evaluation import evaluate_case
+            report = evaluate_case(args.case, args.output, run=args.run, stage_only=args.stage)
+            print(dumps({"status": report.status, "analysis_status": report.analysis_status,
+                         "coverage": report.summary["coverage"], "output_dir": args.output, "api_calls": 0}))
+            return 0 if report.status == "passed" else 1 if report.status == "failed" else 2
         if args.command in {"evaluate-offline", "audit-run"}:
             from .evaluation import evaluate_offline, save_audit
             if args.command == "evaluate-offline":

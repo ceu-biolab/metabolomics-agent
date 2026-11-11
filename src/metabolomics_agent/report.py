@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import numpy as np
+
 from .evidence_models import StageReport
 from .models import FinishArgs
 from .state import RunState, dumps
@@ -31,12 +33,31 @@ def finish_analysis(state: RunState, args: FinishArgs):
     unknown = {aid for finding in args.findings for aid in finding.evidence_ids if aid not in known}
     if unknown:
         raise ValueError(f"Unknown evidence IDs: {sorted(unknown)}")
+    for finding in args.findings:
+        for claim in getattr(finding, "claims", []):
+            if claim.comparison_id not in comparisons or claim.comparison_id not in finding.evidence_ids:
+                raise ValueError("Quantitative claims require a current, cited comparison.")
+            comparison = comparisons[claim.comparison_id]
+            if claim.metric in {"significant_features", "features_tested"}:
+                if claim.feature is not None:
+                    raise ValueError("Aggregate claims cannot name a feature.")
+                expected = comparison[claim.metric]
+                matches = claim.value == expected
+            else:
+                table = state.read_artifact(comparison["artifact_id"]).set_index("feature")
+                if claim.feature not in table.index:
+                    raise ValueError("A quantitative feature claim must name a tested feature.")
+                expected = table.loc[claim.feature, claim.metric]
+                matches = np.isfinite(expected) and np.isclose(claim.value, expected, rtol=1e-9, atol=0)
+            if not matches:
+                raise ValueError("Quantitative claim disagrees with its saved numerical evidence.")
     cfg = state.config
     audited_figures = bool(state.workflow and state.run_info.get("visualization_version"))
     scope = state.workflow_plans[state.workflow.data.plan_id] if audited_figures else None
     objective = scope.objective if scope else cfg.objective
     lines = ["# Metabolomics analysis report", "", objective, "",
-             f"Comparison: **{cfg.treatment_group} relative to {cfg.reference_group}**. "
+             (f"Descriptive scope: **{', '.join(cfg.group_order)}**. " if cfg.analysis_scope == "descriptive" else
+              f"Comparison: **{cfg.treatment_group} relative to {cfg.reference_group}**. ") +
              f"Study design: {cfg.design}. Input scale: {cfg.input_scale}.", "",
              f"Normalization metadata: {cfg.normalization_status}", "",
              f"Selected samples: {len(state.raw)}. Input features: {len(state.raw.columns)}.", "",
@@ -179,6 +200,8 @@ def finish_analysis(state: RunState, args: FinishArgs):
               "the harness does not verify every natural-language claim.", ""]
     for finding in args.findings:
         lines.append(f"- {finding.text} (evidence: {', '.join(finding.evidence_ids)})")
+        for claim in getattr(finding, "claims", []):
+            lines.append(f"  - Verified numerical claim: {claim.comparison_id}; {claim.feature or 'all features'}; {claim.metric} = {claim.value:.17g}.")
     lines += ["", "## Limitations", ""]
     limitations = [*args.limitations,
                   "Analyses added after an initial test are exploratory. Multiplicity correction "

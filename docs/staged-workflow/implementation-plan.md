@@ -8,6 +8,10 @@ C instala sus copias en el paquete y activa las instrucciones por etapa. La
 evaluación offline y el refinamiento de G están documentados en
 [delivery-G.md](delivery-G.md); la evaluación con un LLM real no se ha ejecutado. La ampliación
 posterior de heatmaps y PCA se describe en [pca-heatmap-extension.md](pca-heatmap-extension.md).
+H1–H7 están implementadas y verificadas: infraestructura reutilizable de
+evaluación por etapas con `Lipidomics_dataset.xlsx` como primer caso real.
+El alcance está en [plan-H.md](plan-H.md) y los resultados en
+[delivery-H.md](delivery-H.md). H8 permanece pendiente por indicación del usuario.
 
 ## 1. Alcance y decisiones
 
@@ -300,6 +304,7 @@ utiliza contratos, persistencia y requisitos propios; su activación es explíci
 | E | Univariante con plan explícito e informe de incidencias | Resultados actuales preservados; máscaras y n observado no se sustituyen por n imputado |
 | F | Figuras y fuente persistida; informe final por objetivo | No exige PCA ni volcano en análisis descriptivos; vincula todas las limitaciones relevantes |
 | G | Prompts completos, demo por etapas, restauración y evaluación integrada | Ejecuciones reproducibles y comparables; evaluación real del LLM separada de pruebas simuladas |
+| H (offline completada) | Contratos y evaluadores reutilizables por etapa; primer caso real con `Lipidomics_dataset.xlsx` | H1–H7 verificadas; H8 pendiente. Criterios, referencias y cobertura por etapa; resultados en [delivery-H.md](delivery-H.md) |
 
 ## 9. Verificación y criterios globales
 
@@ -330,3 +335,9 @@ figuras e informes de F están implementados y verificados. Las cinco etapas y
 sus prompts están activos en nuevas ejecuciones. G dispone de una suite offline
 reproducible y auditorías de ejecuciones; queda pendiente la evaluación del
 razonamiento de un LLM real, preparada por separado.
+H amplía esa base con expectativas por conjunto de datos y objetivo científico;
+su alcance, secuencia y criterios de aceptación están definidos en
+[plan-H.md](plan-H.md). H1–H7 están implementadas y el conjunto real se ha
+reproducido offline; quedan pendientes H8 y las revisiones humanas científicas
+y visuales. La carga descriptiva/PCA admite grupos explícitos adicionales sin
+ampliar las pruebas inferenciales de dos grupos.

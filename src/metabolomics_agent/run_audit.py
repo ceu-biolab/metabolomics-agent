@@ -30,10 +30,10 @@ class Checks:
         self.items.append(clean_json({"id": name, "passed": bool(passed),
                                       "expected": expected, "observed": observed}))
 
-    def close(self, name, actual, expected):
+    def close(self, name, actual, expected, *, atol=1e-12):
         actual, expected = np.asarray(actual, dtype=float), np.asarray(expected, dtype=float)
         same = actual.shape == expected.shape
-        passed = same and np.allclose(actual, expected, rtol=1e-9, atol=1e-12, equal_nan=True)
+        passed = same and np.allclose(actual, expected, rtol=1e-9, atol=atol, equal_nan=True)
         errors = np.abs(actual[np.isfinite(actual)]-expected[np.isfinite(actual)]) if same else []
         self.numeric_values += expected.size
         self.add(name, passed, {"shape": list(expected.shape)}, {
@@ -202,7 +202,7 @@ def _requests(root, state, info, store, checks):
         record = _json(path)
         context = json.loads(record["messages"][-1]["content"])["stage_context"]
         stage = record["stage"]
-        keys = ["descriptive_version", "univariate_version", "visualization_version", "pca_version"]
+        keys = ["descriptive_version", "univariate_version", "visualization_version", "pca_version", "diagnostic_version", "reporting_version"]
         checks.add(f"request.{index+1}.capability_profile", all(context.get(key, 0) == info.get(key, 0) for key in keys))
         block = context.get("analysis_block", "univariate")
         active = "03_pca" if stage == STAGES[2] and block == "pca" else stage
@@ -220,7 +220,7 @@ def _requests(root, state, info, store, checks):
         if not info.get("univariate_version"):
             allowed -= {"inspect_univariate"}
         names = {tool["function"]["name"] for tool in record["tools"]}
-        if info.get("visualization_version") == 2 and info.get("pca_version") == 1:
+        if info.get("visualization_version") in {2, 3} and info.get("pca_version") == 1:
             from .tools import ToolRegistry
             profile = SimpleNamespace(run_info=info, workflow=SimpleNamespace(stage=stage, allowed_tools=lambda: allowed))
             definitions = {tool["function"]["name"]: tool["function"]["parameters"] for tool in ToolRegistry(profile).schemas()}
@@ -485,13 +485,14 @@ def _comparisons(state, info, store, checks):
             if not np.isfinite(intervals).all():
                 intervals = [np.nan, np.nan]
             expected_p.loc[feature] = p
-            checks.close(f"comparison.{cid}.{feature}.test", [row.statistic, row.p_value], [statistic, p])
+            checks.close(f"comparison.{cid}.{feature}.statistic", row.statistic, statistic)
+            checks.close(f"comparison.{cid}.{feature}.p_value", row.p_value, p, atol=0)
             checks.close(f"comparison.{cid}.{feature}.effects_ci", [row.hedges_g, row.rank_biserial, row.ci_low_test_scale, row.ci_high_test_scale], [effect, rank_effect, *intervals])
         valid = expected_p.notna()
         adjusted = pd.Series(np.nan, index=expected_p.index)
         if valid.any():
             adjusted.loc[valid] = multipletests(expected_p[valid], alpha=plan["alpha"], method=plan["correction"])[1]
-        checks.close(f"comparison.{cid}.adjusted_p", table.adjusted_p_value, adjusted)
+        checks.close(f"comparison.{cid}.adjusted_p", table.adjusted_p_value, adjusted, atol=0)
         checks.add(f"comparison.{cid}.discoveries", int(table.significant.sum()) == int((adjusted < plan["alpha"]).sum())
                    == comparison["significant_features"])
         checks.add(f"comparison.{cid}.tested_counts", comparison["features_tested"] == int(valid.sum())
@@ -610,7 +611,41 @@ def _figures(state, store, checks):
             result = state["pcas"][figure["source_id"]]
             weights = _table(store, result["artifacts"]["loadings"]).set_index("feature")
             checks.close(f"figure.{aid}.weights", display.weight, weights.loc[display.feature, f"PC{figure['component']}"])
+        elif figure["kind"] == "pca_loadings_scatter":
+            result = state["pcas"][figure["source_id"]]
+            weights = _table(store, result["artifacts"]["loadings"]).set_index("feature")
+            names = [f"PC{i}" for i in figure["components"]]
+            checks.add(f"figure.{aid}.weight_labels", display.feature.tolist() == (figure.get("features") or weights.index.tolist()))
+            checks.close(f"figure.{aid}.weight_coordinates", display[names], weights.loc[display.feature, names])
 
+
+
+def _claims(root, state, store, checks):
+    document = _json(root / "findings.json") if (root / "findings.json").exists() else {"findings": []}
+    count = 0
+    current = state.get("workflow", {}).get("comparison_ids", [])
+    for finding in document["findings"]:
+        for claim in finding.get("claims", []):
+            count += 1
+            cid = claim["comparison_id"]
+            valid = cid in current and cid in finding["evidence_ids"]
+            expected = None
+            if valid:
+                comparison = state["comparisons"][cid]
+                metric = claim["metric"]
+                if metric in {"significant_features", "features_tested"}:
+                    expected = comparison[metric]
+                    valid = claim.get("feature") is None and claim["value"] == expected
+                elif metric in {"p_value", "adjusted_p_value", "log2_fold_change", "statistic"}:
+                    table = _table(store, comparison["artifact_id"], "feature")
+                    valid = claim.get("feature") in table.index
+                    if valid:
+                        expected = table.loc[claim["feature"], metric]
+                        valid = np.isfinite(expected) and np.isclose(claim["value"], expected, rtol=1e-9, atol=0)
+                else:
+                    valid = False
+            checks.add(f"report.structured_claim.{count}", valid, expected, claim["value"])
+    return {"structured_claims_checked": count, "free_text_claims": "not_assessed"}
 
 
 def audit_run(directory: Path):
@@ -632,9 +667,11 @@ def audit_run(directory: Path):
                    and value["sha256"] == store.artifacts[aid].sha256 for aid, value in state["artifacts"].items()))
         report["registered_artifacts"] = len(store.artifacts)
         for name, function in [("trace", _requests), ("stages", _stages), ("preparation", _preparation),
-                               ("descriptives", _descriptives), ("comparisons", _comparisons), ("pca", _pca), ("figures", _figures)]:
+                               ("descriptives", _descriptives), ("comparisons", _comparisons), ("pca", _pca), ("figures", _figures), ("claims", _claims)]:
             try:
-                if name in {"trace", "stages"}:
+                if name == "claims":
+                    report[name] = function(root, state, store, checks)
+                elif name in {"trace", "stages"}:
                     report[name] = function(root, state, info, store, checks)
                 elif name == "figures":
                     if info.get("visualization_version"):

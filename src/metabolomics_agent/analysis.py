@@ -20,7 +20,7 @@ def inspect_dataset(state: RunState):
         row = {"feature": feature, "missing_fraction": x[feature].isna().mean(),
                "zero_fraction": (x[feature] == 0).mean(),
                "unique_observed": x[feature].nunique()}
-        for label in [cfg.reference_group, cfg.treatment_group]:
+        for label in cfg.group_order:
             v = x.loc[meta[cfg.group_column] == label, feature]
             observed = v.dropna()
             q1, q3 = observed.quantile([0.25, 0.75])

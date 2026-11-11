@@ -255,6 +255,8 @@ class Workflow:
                 "univariate_version": self.state.run_info.get("univariate_version", 0),
                 "visualization_version": self.state.run_info.get("visualization_version", 0),
                 "pca_version": self.state.run_info.get("pca_version", 0),
+                "diagnostic_version": self.state.run_info.get("diagnostic_version", 0),
+                "reporting_version": self.state.run_info.get("reporting_version", 0),
                 "analysis_block": "pca" if self.in_pca_block() else "univariate",
                 "pca_requirement": self.pca_requirement(), "pca_reviewed": self.data.pca_reviewed,
                 "pca_diagnostic_id": self.data.pca_diagnostic_id, "pca_results": self.pca_descriptors()[:10],
@@ -328,6 +330,8 @@ class Workflow:
         return pid
 
     def set_workflow_plan(self, plan):
+        if self.state.config.analysis_scope == "descriptive" and plan.analysis_kind != "descriptive":
+            raise ValueError("A descriptive loading scope cannot perform group-comparison inference.")
         if self.data.plan_id:
             raise ValueError("The workflow scope is already registered; start a new run to change scope.")
         self.data.plan_id = self._register_plan("w", plan, self.state.workflow_plans)
@@ -402,6 +406,8 @@ class Workflow:
             kinds.add("heatmap")
         if self.state.run_info.get("pca_version"):
             kinds.update({"pca_scores", "pca_scree", "pca_loadings"})
+            if self.state.run_info.get("visualization_version", 0) >= 3:
+                kinds.add("pca_loadings_scatter")
         if args.kind not in kinds:
             raise ValueError("Unsupported figure for this workflow version.")
         if self.stage == STAGES[1]:
@@ -467,7 +473,7 @@ class Workflow:
             else:
                 plan = self.state.figure_plans[data.figure_plan_id]
                 for figure in plan.figures:
-                    if self.state.run_info.get("visualization_version") == 2 and figure.kind == "heatmap":
+                    if self.state.run_info.get("visualization_version", 0) >= 2 and figure.kind == "heatmap":
                         from .heatmaps import complete_plot
                         if not any(complete_plot(self.state, self.state.plot_results[pid], figure, data.figure_ids)
                                    for pid in data.plot_result_ids):
