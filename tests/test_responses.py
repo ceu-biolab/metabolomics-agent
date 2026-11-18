@@ -6,8 +6,10 @@ from openai import OpenAI
 
 from metabolomics_agent.agent import Agent
 from metabolomics_agent.cli import llm_config_from_env
-from metabolomics_agent.llm import OpenAICompatibleProvider
-from metabolomics_agent.models import LLMConfig
+from metabolomics_agent.examples import generate_example
+from metabolomics_agent.llm import DemoProvider, OpenAICompatibleProvider
+from metabolomics_agent.models import LLMConfig, StudyConfig
+from metabolomics_agent.state import RunState
 
 
 def response_payload(output, *, status="completed", incomplete=None):
@@ -128,3 +130,60 @@ def test_resume_cannot_switch_api_format(state):
 
     with pytest.raises(ValueError, match="original API format"):
         Agent(state, SequenceProvider([]), LLMConfig(model="test", api="responses")).run("", resume=True)
+
+
+@pytest.mark.parametrize("api", ["chat_completions", "responses"])
+def test_transport_serializes_current_phase_window_only(tmp_path, api):
+    study = generate_example(tmp_path / "input")
+    config = StudyConfig.model_validate_json(study.read_text())
+    state = RunState(config, study.parent, tmp_path / "run")
+    result = Agent(state, DemoProvider(), LLMConfig(
+        model="offline", max_turns=3, max_total_tokens=500000,
+    )).run(config.objective, progress=lambda _: None)
+    assert result["status"] == "turn_limit"
+    saved = [json.loads(path.read_text()) for path in sorted((state.output_dir / "requests").glob("*.json"))]
+    assert len(saved) == 3
+    assert saved[0]["stage"] == saved[1]["stage"] == "01_coordination"
+    assert saved[2]["stage"] == "02_preparation"
+    assert saved[0]["context_window"]["epoch"] < saved[2]["context_window"]["epoch"]
+
+    sent = []
+    def handle(request):
+        body = json.loads(request.content)
+        sent.append(body)
+        if api == "responses":
+            assert request.url.path == "/v1/responses"
+            return httpx.Response(200, json=response_payload([TEXT]))
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(200, json={
+            "id": "chat_test", "object": "chat.completion", "created": 1,
+            "model": "test", "choices": [{"index": 0, "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "Done."}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+    live = LLMConfig(model="test", base_url="https://local.test/v1", api=api,
+                     max_total_tokens=500000)
+    provider = provider_with_transport(live, handle)
+    try:
+        for record in saved[1:]:
+            messages = json.loads(json.dumps(record["messages"]))
+            if api == "responses":
+                for message in messages:
+                    if message.get("role") == "assistant" and message.get("tool_calls"):
+                        message["_responses_output"] = [{
+                            "id": "fc_test", "type": "function_call",
+                            "call_id": call["id"], "name": call["function"]["name"],
+                            "arguments": call["function"]["arguments"], "status": "completed",
+                        } for call in message["tool_calls"]]
+            provider.complete(messages, record["tools"], max_tokens=100, timeout=5)
+    finally:
+        provider.client.close()
+    assert len(sent) == 2
+    first = sent[0]["input" if api == "responses" else "messages"]
+    next_phase = sent[1]["input" if api == "responses" else "messages"]
+    assert any(item.get("tool_call_id") or item.get("type") == "function_call_output"
+               for item in first)
+    assert not any(item.get("tool_call_id") or item.get("type") == "function_call_output"
+                   for item in next_phase)
+    assert "set_workflow_plan" not in json.dumps(next_phase)

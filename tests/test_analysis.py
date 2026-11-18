@@ -128,7 +128,7 @@ def test_paired_analysis_aligns_subjects_not_row_order(tmp_path, test):
     table.to_csv(tmp_path / "data.csv", index=False)
     cfg = StudyConfig(data_path="data.csv", reference_group="N", treatment_group="T",
                       design="paired", pair_column="subject")
-    state = RunState(cfg, tmp_path, tmp_path / "run")
+    state = RunState(cfg, tmp_path, tmp_path / "run", protocol="legacy")
     registry = ToolRegistry(state)
     did = prepare(registry, test=test)
     result = call(registry, "compare_groups", {"dataset_id": did})

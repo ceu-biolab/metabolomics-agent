@@ -1,0 +1,21 @@
+{
+  "review_date": "2026-11-10",
+  "scope": "Current working tree, including pre-existing uncommitted changes",
+  "head": "1b018d4f5c593b26910731b5e3af9cda8c37201a",
+  "pytest": {
+    "command": ".venv/bin/python -m pytest -q",
+    "exit_code": 0,
+    "passed": 142,
+    "elapsed_seconds": 630.18
+  },
+  "ruff": {
+    "command": ".venv/bin/python -m ruff check --config pyproject.toml src tests --output-format concise",
+    "version": "0.17.4",
+    "exit_code": 1,
+    "diagnostics": 68,
+    "autofixes_applied": false
+  },
+  "additional_probes": "2026-11-10-probes.json",
+  "live_llm_calls": 0,
+  "implementation_changes": false
+}

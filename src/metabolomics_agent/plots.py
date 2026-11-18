@@ -22,6 +22,12 @@ def _features(columns, requested, limit=6):
 
 
 def make_plot(state: RunState, args: PlotArgs):
+    if state.workflow and state.run_info.get("visualization_version"):
+        if state.run_info.get("visualization_version", 0) >= 2 and args.kind == "heatmap":
+            from .heatmaps import make_heatmap
+            return make_heatmap(state, args)
+        from .visualization import make_audited_plot
+        return make_audited_plot(state, args)
     sns.set_theme(style="whitegrid", context="notebook")
     source, kind, cfg = args.source_id, args.kind, state.config
     fig = None
@@ -69,7 +75,8 @@ def make_plot(state: RunState, args: PlotArgs):
                     axes[i, 0].set_title(f"{feature}: input")
                     if dataset:
                         sns.histplot(dataset.testing[feature].dropna(), ax=axes[i, 1], bins=18, color="#bf3e36")
-                        transform = state.plans[dataset.plan_id].transform
+                        transform = (state.preprocessing_plans.get(dataset.plan_id)
+                                     or state.plans[dataset.plan_id]).transform
                         axes[i, 1].set_title(f"{feature}: test scale ({transform})")
             elif kind == "boxplot":
                 fig, axes = plt.subplots(1, len(features), figsize=(max(6, 3 * len(features)), 5), squeeze=False)

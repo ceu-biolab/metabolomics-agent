@@ -66,13 +66,16 @@ def load_study(config: StudyConfig, base_dir: Path):
         raise ValueError("Infinite feature values are not supported; correct the input.")
     if (numeric < 0).any().any():
         raise ValueError("Inputs must be nonnegative concentrations/intensities, before log/scaling.")
-    selected = table[group].isin([config.reference_group, config.treatment_group])
+    if set(config.group_order) - set(table[group]):
+        raise ValueError("Every selected group must exist in the input.")
+    selected = table[group].isin(config.group_order)
     excluded_groups = table.loc[~selected, group].value_counts().to_dict()
     metadata = table.loc[selected, sorted(metadata_columns)].set_index(sid)
     values = numeric.loc[selected].copy()
     values.index = metadata.index
-    for label in [config.reference_group, config.treatment_group]:
-        if (metadata[group] == label).sum() < 3:
+    for label in config.group_order:
+        minimum = 1 if config.analysis_scope == "descriptive" else 3
+        if (metadata[group] == label).sum() < minimum:
             raise ValueError(f"Group {label!r} needs at least three samples for this prototype.")
     if config.design == "paired":
         if metadata[config.pair_column].isna().any():

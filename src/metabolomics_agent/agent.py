@@ -2,6 +2,7 @@ import json
 import time
 from importlib.resources import files
 
+from .evidence_models import StageIssue
 from .llm import Provider
 from .models import LLMConfig
 from .state import RunState, dumps
@@ -14,9 +15,20 @@ class Agent:
         self.registry = ToolRegistry(state)
         self.messages: list[dict] = []
 
+    def _reject_call(self, name, message):
+        self.state.event("tool_error", tool=name, error=message)
+        report = self.state.evidence.active
+        if self.state.workflow and report is not None:
+            report.issues.append(StageIssue(code="AGENT_TOOL_CALL_REJECTED", severity="warning",
+                source="tool_error", message=f"{name}: {message}", scope={"stage": self.state.workflow.stage}))
+            self.state.evidence._save_report()
+        return {"ok": False, "error": message}
+
     def run(self, request: str, *, progress=print, resume=False):
         state, config = self.state, self.config
-        system = files("metabolomics_agent").joinpath("prompts/system.md").read_text()
+        phase_window = bool(state.workflow and state.run_info.get("context_strategy") == "phase_window_v1")
+        system = (state.workflow.prompt() if state.workflow else
+                  files("metabolomics_agent").joinpath("prompts/system.md").read_text())
         if resume:
             self.messages = json.loads((state.output_dir / "conversation.json").read_text())
             pending = set()
@@ -32,7 +44,39 @@ class Agent:
                 raise ValueError("Resume must use the original model and endpoint.")
             if previous.get("api", "chat_completions") != config.api:
                 raise ValueError("Resume must use the original API format; start a new run to switch APIs.")
+            if phase_window:
+                window = state.context_window
+                user_requests = state.run_info.get("user_requests")
+                if (not isinstance(window.get("start_index"), int)
+                        or not 2 <= window["start_index"] <= len(self.messages)
+                        or not isinstance(window.get("phase"), str)
+                        or not isinstance(window.get("epoch"), int)
+                        or not self.messages[1:2] or self.messages[1]["role"] != "user"
+                        or not isinstance(user_requests, list) or not user_requests
+                        or user_requests[0].get("kind") != "initial"
+                        or user_requests[0].get("message_index") != 1):
+                    raise ValueError("Invalid saved phase context window.")
+                boundary_pending = set()
+                for message in self.messages[:window["start_index"]]:
+                    if message["role"] == "assistant":
+                        boundary_pending.update(call["id"] for call in message.get("tool_calls", []))
+                    elif message["role"] == "tool":
+                        boundary_pending.discard(message["tool_call_id"])
+                if boundary_pending:
+                    raise ValueError("Saved phase context starts inside a tool-call batch.")
+                for entry in user_requests:
+                    index = entry["message_index"]
+                    if (not isinstance(index, int) or not 1 <= index < len(self.messages)
+                            or self.messages[index]["role"] != "user"):
+                        raise ValueError("Saved user clarification is absent from the conversation.")
+                    if index > 1 and entry.get("text") != self.messages[index]["content"]:
+                        raise ValueError("Saved user clarification differs from the conversation.")
             if request:
+                if phase_window:
+                    state.run_info.setdefault("user_requests", []).append({
+                        "kind": "clarification", "text": request,
+                        "message_index": len(self.messages),
+                    })
                 self.messages.append({"role": "user", "content": request})
             state.run_info.setdefault("sessions", []).append({
                 "previous_status": state.status, "previous_usage": state.run_info.get("usage", {}),
@@ -51,6 +95,10 @@ class Agent:
         state.run_info["system_prompt"] = system
         if not resume:
             state.run_info["request"] = request
+            if phase_window:
+                state.run_info["user_requests"] = [
+                    {"kind": "initial", "text": request, "message_index": 1},
+                ]
             state.write_json("model_input.json", {
                 "messages": self.messages, "tools": self.registry.schemas(),
             })
@@ -85,12 +133,48 @@ class Agent:
                 if remaining_seconds <= 0:
                     state.status = "time_limit"
                     break
+                if state.workflow:
+                    state.workflow.activate()
+                    if phase_window:
+                        phase = state.workflow.context_phase()
+                        window = state.context_window
+                        if window["phase"] != phase:
+                            window = {"phase": phase, "start_index": len(self.messages),
+                                      "epoch": window["epoch"] + 1}
+                            state.context_window = window
+                            state.event("context_window_started", **window)
+                            state.snapshot()
+                        start = window["start_index"]
+                        earlier_clarifications = [
+                            self.messages[item["message_index"]]
+                            for item in state.run_info["user_requests"][1:]
+                            if item["message_index"] < start
+                        ]
+                        context = state.workflow.model_context()
+                        context["tool_responses_seen"] = sum(
+                            message["role"] == "tool" for message in self.messages
+                        )
+                        request_messages = [
+                            {"role": "system", "content": state.workflow.prompt()},
+                            self.messages[1], *earlier_clarifications,
+                            *self.messages[start:],
+                            {"role": "user", "content": dumps({"stage_context": context})},
+                        ]
+                    else:
+                        request_messages = [
+                            {"role": "system", "content": state.workflow.prompt()},
+                            *self.messages[1:],
+                            {"role": "user", "content": dumps({"stage_context": state.workflow.context()})},
+                        ]
+                else:
+                    request_messages = self.messages
+                request_tools = self.registry.schemas()
                 # UTF-8 bytes plus protocol overhead is a deliberately conservative
                 # input-token estimate. Provider-reported usage replaces it after a call.
-                payload_bytes = len(json.dumps({"messages": self.messages,
-                                               "tools": self.registry.schemas()}, ensure_ascii=False).encode())
-                input_bound = payload_bytes + 64 * (len(self.messages) + len(self.registry.schemas()))
-                if anchor_tokens is not None:
+                payload_bytes = len(json.dumps({"messages": request_messages,
+                                               "tools": request_tools}, ensure_ascii=False).encode())
+                input_bound = payload_bytes + 64 * (len(request_messages) + len(request_tools))
+                if anchor_tokens is not None and not state.workflow:
                     added = self.messages[anchor_count:]
                     input_bound = anchor_tokens + len(json.dumps(added, ensure_ascii=False).encode()) + 64 * (len(added) + 2)
                 remaining = config.max_total_tokens - total_tokens
@@ -98,7 +182,14 @@ class Agent:
                     state.status = "token_limit"
                     break
                 completion_limit = min(config.max_completion_tokens, remaining - input_bound)
-                reply = self.provider.complete(self.messages, self.registry.schemas(),
+                if state.workflow:
+                    number = max((int(path.stem.split("_")[1]) for path in
+                                  (state.output_dir / "requests").glob("request_*.json")), default=0) + 1
+                    state.write_json(f"requests/request_{number:04d}.json", {
+                        "stage": state.workflow.stage, "messages": request_messages, "tools": request_tools,
+                        **({"context_window": state.context_window.copy()} if phase_window else {}),
+                    })
+                reply = self.provider.complete(request_messages, request_tools,
                                                max_tokens=completion_limit,
                                                timeout=min(config.timeout_seconds, remaining_seconds))
                 turns_used += 1
@@ -135,25 +226,32 @@ class Agent:
                     function = call.get("function", {})
                     name, arguments = function.get("name", ""), function.get("arguments", "")
                     progress(f"[{turn:02d}] {name}")
-                    if time.monotonic() - started >= config.max_run_seconds:
+                    offered = {tool["function"]["name"] for tool in request_tools}
+                    if state.workflow and name not in offered:
+                        result = self._reject_call(name, "Tool was not offered in this request's stage.")
+                    elif time.monotonic() - started >= config.max_run_seconds:
                         result = {"ok": False, "error": "Run time limit reached before tool execution."}
                         state.status = "time_limit"
                     elif name == "finish_analysis" and index != len(calls) - 1:
-                        result = {"ok": False, "error": "finish_analysis must be the last call in a batch."}
-                        state.event("tool_error", tool=name, error=result["error"])
+                        result = self._reject_call(name, "finish_analysis must be the last call in a batch.")
                     else:
                         result = self.registry.execute(name, arguments)
                     self.messages.append({"role": "tool", "tool_call_id": call["id"], "content": dumps(result)})
                     state.write_json("conversation.json", self.messages)
-                if state.finished or state.status == "time_limit":
+                if state.finished or state.status in {"time_limit", "needs_input"}:
                     break
             else:
                 state.status = "turn_limit"
-        except Exception as error:
-            state.status = "failed"
+        except BaseException as error:
+            state.status = "failed" if isinstance(error, Exception) else "interrupted"
             state.event("run_error", error_type=type(error).__name__)
             raise
         finally:
+            if state.workflow and not state.finished:
+                state.workflow.interrupt(
+                    f"Agent invocation ended with status {state.status}.",
+                    status="failed" if state.status == "failed" else "interrupted",
+                )
             state.run_info["usage"] = {"total_tokens": total_tokens, "tool_calls": tool_count,
                                        "model_turns": previous_model_turns + turns_used,
                                        "elapsed_seconds": prior_usage.get("elapsed_seconds", 0) + time.monotonic() - started}
@@ -161,7 +259,10 @@ class Agent:
             state.write_json("run.json", state.run_info)
             state.write_json("conversation.json", self.messages)
             state.snapshot()
-            if not state.finished:
+            if not state.finished and state.workflow and state.run_info.get("visualization_version"):
+                from .report import write_partial_report
+                write_partial_report(state)
+            elif not state.finished:
                 content = self.messages[-1].get("content") if self.messages else None
                 (state.output_dir / "incomplete.md").write_text(
                     f"# Analysis did not finish\n\nStatus: {state.status}.\n\n"

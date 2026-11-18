@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import pytest
 
@@ -21,18 +23,24 @@ def test_metadata_alignment_and_numeric_metadata_exclusion(tmp_path):
     assert metadata.loc["001", "group"] == "N"
 
 
-def test_bad_inputs_fail_before_creating_run(independent_study):
+def test_bad_inputs_preserve_initialization_report(independent_study):
     cfg, root, table = independent_study
-    for mutation, match in [
+    for index, (mutation, match) in enumerate([
         (lambda t: t.assign(sample_id="same"), "unique"),
         (lambda t: t.assign(lipid_a=-1), "nonnegative"),
         (lambda t: t.assign(lipid_a=float("inf")), "Infinite"),
         (lambda t: t.assign(unexplained_text="metadata"), "metadata_columns"),
-    ]:
+    ]):
         mutation(table).to_csv(root / "values.csv", index=False)
+        output = root / f"run-{index}"
         with pytest.raises(ValueError, match=match):
-            RunState(cfg, root, root / "run")
-        assert not (root / "run").exists()
+            RunState(cfg, root, output)
+        report_path = output / "stages/initialization/attempt_001/stage_report.json"
+        report = json.loads(report_path.read_text())
+        assert report["status"] == "failed"
+        assert match in report["issues"][0]["message"]
+        assert report_path.with_suffix(".md").is_file()
+        assert not (output / "state.json").exists()
 
 
 def test_existing_run_is_not_overwritten(state, independent_study):
